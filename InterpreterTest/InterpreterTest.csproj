@@ -42,8 +42,13 @@
     <Reference Include="System" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Program.cs" />
+    <Compile Include="Program.cs">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </Compile>
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <None Include="echo.luac">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Include="hello.luac">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

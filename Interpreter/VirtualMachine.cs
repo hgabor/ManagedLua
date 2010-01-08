@@ -23,8 +23,15 @@ namespace ManagedLua.Interpreter {
 		Table globals = new ManagedLua.Environment.Types.Table();
 		List<object> stack = new List<object>();
 		
-		public VirtualMachine() {
+		public VirtualMachine(string[] in_args) {
 			LoadStdLib();
+			
+			//Set args
+			Table arg = new Table();
+			for (double i = 0; i < in_args.Length; ++i) {
+				arg[i] = in_args[(int)i];
+			}
+			globals["arg"] = arg;
 		}
 		
 		private void LoadStdLib() {
@@ -266,7 +273,7 @@ namespace ManagedLua.Interpreter {
 		abstract class ClosureBase: Closure {
 			private List<object> stack;
 			
-			public List<object> Stack {
+			protected List<object> Stack {
 				get {
 					return stack;
 				}
@@ -274,6 +281,14 @@ namespace ManagedLua.Interpreter {
 			
 			public virtual void Prepare() {
 				stack = new List<object>();
+			}
+			
+			public void AddParam(object o) {
+				stack.Add(o);
+			}
+			
+			public List<object> GetResults() {
+				return stack;
 			}
 		}
 		
@@ -286,22 +301,35 @@ namespace ManagedLua.Interpreter {
 				this.method = method;
 			}
 			
-			public override void Prepare() {
-				base.Prepare();
-				
-				//Allocate stack
-				for (int i = 0; i < method.GetParameters().Length; ++i) {
-					Stack.Add(Nil.Value);
-				}
-			}
-			
 			public override void Run() {
 				var methodParams = method.GetParameters();
-				for (int i = 0; i < methodParams.Length; ++i) {
+				
+				var callParams = new List<object>();
+				
+				int i;
+				for (i = 0; i < methodParams.Length-1; ++i) {
 					Type t = methodParams[i].ParameterType;
 					if (!t.IsInstanceOfType(Stack[i])) throw new ArgumentException();
+					callParams.Add(Stack[i]);
 				}
-				object ret = method.Invoke(lib, Stack.ToArray());
+				if (i < methodParams.Length) {
+					Type t = methodParams[i].ParameterType;
+					if (methodParams[i].GetCustomAttributes(typeof(ParamArrayAttribute), false).Length > 0) {
+						//This is a vararg function
+						Type et = t.GetElementType();
+						var paramArray = new List<object>();
+						for(; i < Stack.Count; ++i) {
+							if (!et.IsInstanceOfType(Stack[i])) throw new ArgumentException();
+							paramArray.Add(Stack[i]);
+						}
+						callParams.Add(paramArray.ToArray());
+					}
+					else {
+						if (!t.IsInstanceOfType(Stack[i])) throw new ArgumentException();
+						callParams.Add(Stack[i]);
+					}
+				}
+				object ret = method.Invoke(lib, callParams.ToArray());
 				//TODO: multiple return values
 				Stack.Clear();
 				Stack.Add(ret);
@@ -312,15 +340,15 @@ namespace ManagedLua.Interpreter {
 			Function f;
 			uint[] code;
 			int cSize;
-			int ip = 0;
+			int pc = 0;
 			
 			const int InstructionMask = 0x0000003F;
 			const uint AMask = 0x00003FC0;
 			const uint CMask = 0x007FC000;
 			const uint BMask = 0xFF800000;
-			//const uint BMask = 0x007FC000;
-			//const uint CMask = 0xFF800000;
 			const uint BxMask = 0xFFFFC000;
+			const uint MSB = 0x00000100;
+			const uint sBx0 = 131071;
 			
 			Table globals;
 			
@@ -341,20 +369,53 @@ namespace ManagedLua.Interpreter {
 			}
 			
 			public override void Run() {
-				while (ip < cSize) {
-					uint op = code[ip];
-					++ip;
+				while (pc < cSize) {
+					uint op = code[pc];
+					++pc;
 					OpCode opcode = (OpCode)(op & InstructionMask);
 					
 					uint A = (op & AMask) >> 6;
 					int iA = (int)A;
 					uint B = (op & BMask) >> (6 + 8 + 9);
+					int iB = (int)B;
 					uint C = (op & CMask) >> (6 + 8);
+					int iC = (int)C;
 					uint Bx = (op & BxMask) >> (6 + 8);
+					int iBx = (int)Bx;
+					
+					int sBx = iBx - (int)sBx0;
+					
+					bool B_const = (B & MSB) != 0;
+					uint B_RK = B & ~MSB;
+					int iB_RK = (int)B_RK;
+					
+					bool C_const = (C & MSB) != 0;
+					uint C_RK = C & ~MSB;
+					int iC_RK = (int)C_RK;
+					
 					switch(opcode) {
+					case OpCode.MOVE: {
+							Stack[iA] = Stack[iB];
+							break;
+						}
+							
 					case OpCode.GETGLOBAL: {
 							Constant c = f.Constants[Bx];
 							Stack[iA] = globals[c.Value];
+							break;
+						}
+							
+					case OpCode.GETTABLE: {
+							Table t = (Table)Stack[iB];
+							object index;
+							if (C_const) {
+								index = f.Constants[iC_RK].Value;
+							}
+							else {
+								index = Stack[iC_RK];
+							}
+							
+							Stack[iA] = t[index];
 							break;
 						}
 							
@@ -368,24 +429,25 @@ namespace ManagedLua.Interpreter {
 							//Push params
 							if (B >= 1) {
 								for (int i = 0; i < B-1; ++i) {
-									c.Stack[i] = Stack[iA+i+1];
+									c.AddParam(Stack[iA+i+1]);
 								}
 							}
 							else {
 								for (int i = 0; iA+i+1 < Stack.Count; ++i) {
-									c.Stack[i] = Stack[iA+i+1];
+									c.AddParam(Stack[iA+i+1]);
 								}
 							}
 							c.Run();
 							//Pop results
+							var result = c.GetResults();
 							if (C >= 1) {
 								for (int i = 0; i < C-1; ++i) {
-									Stack[iA+i+1] = c.Stack[i];
+									Stack[iA+i] = result[i];
 								}
 							}
 							else {
-								for (int i = 0; iA+i+1 < Stack.Count; ++i) {
-									Stack[iA+i+1] = c.Stack[i];
+								for (int i = 0; iA+i < Stack.Count; ++i) {
+									Stack[iA+i] = result[i];
 								}
 							}
 							break;
@@ -408,6 +470,19 @@ namespace ManagedLua.Interpreter {
 							return;
 						}
 						
+					case OpCode.FORPREP:
+							Stack[iA] = (double)Stack[iA] - (double)Stack[iA+2];
+							pc += sBx;
+							break;
+							
+					case OpCode.FORLOOP:
+							Stack[iA] = (double)Stack[iA] + (double)Stack[iA+2];
+							if ((double)Stack[iA] <= (double)Stack[iA+1]) {
+								pc += sBx;
+								Stack[iA+3] = Stack[iA];
+							}
+							break;
+							
 					default:
 							throw new NotImplementedException(string.Format("OpCode {0} ({1}) is not supported", (int)opcode, opcode, opcode.ToString()));
 					}
