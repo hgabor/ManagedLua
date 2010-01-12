@@ -50,6 +50,8 @@ namespace ManagedLua.Interpreter {
 					t[la.PublicName] = new InternalClosure(m, std);
 				}
 			}
+			Table io = (Table)globals["io"];
+			io["stdout"] = std.StdOut;
 		}
 
 		public void Run(byte[] code) {
@@ -237,7 +239,6 @@ namespace ManagedLua.Interpreter {
 		const byte LUA_TNUMBER = 3;
 		const byte LUA_TSTRING = 4;
 		private struct Constant {
-			public Type Type;
 			public object Value;
 		}
 
@@ -249,19 +250,16 @@ namespace ManagedLua.Interpreter {
 				Constant c = new Constant();
 				switch (t) {
 				case LUA_TNIL:
-					c.Type = typeof(ManagedLua.Environment.Types.Nil);
+					c.Value = Nil.Value;
 					break;
 				case LUA_TBOOLEAN:
-					c.Type = typeof(bool);
 					byte b = (byte)s.ReadByte();
 					c.Value = b == 1;
 					break;
 				case LUA_TNUMBER:
-					c.Type = typeof(double);
 					c.Value = ReadNum(s);
 					break;
 				case LUA_TSTRING:
-					c.Type = typeof(string);
 					c.Value = ReadString(s);
 					break;
 				}
@@ -281,6 +279,7 @@ namespace ManagedLua.Interpreter {
 			
 			public virtual void Prepare() {
 				stack = new List<object>();
+				
 			}
 			
 			public void AddParam(object o) {
@@ -289,6 +288,10 @@ namespace ManagedLua.Interpreter {
 			
 			public List<object> GetResults() {
 				return stack;
+			}
+			
+			public ClosureBase CreateCallableInstance() {
+				return (ClosureBase)this.MemberwiseClone();
 			}
 		}
 		
@@ -329,7 +332,10 @@ namespace ManagedLua.Interpreter {
 						callParams.Add(Stack[i]);
 					}
 				}
-				object ret = method.Invoke(lib, callParams.ToArray());
+				
+				object ret;
+				ret = method.Invoke(lib, callParams.ToArray());
+				
 				//TODO: multiple return values
 				Stack.Clear();
 				Stack.Add(ret);
@@ -361,17 +367,23 @@ namespace ManagedLua.Interpreter {
 			
 			public override void Prepare() {
 				base.Prepare();
-				
-				//Allocate stack
-				for (int i = 0; i < f.MaxStackSize; ++i) {
-					Stack.Add(Nil.Value);
-				}
+				pc = 0;
 			}
 			
+			const double LFIELDS_PER_FLUSH = 50;
 			public override void Run() {
+				//Allocate stack
+				while (Stack.Count < f.MaxStackSize) {
+					Stack.Add(Nil.Value);
+				}
+				
+				if (pc==0) {
+				}
 				while (pc < cSize) {
-					uint op = code[pc];
-					++pc;
+					if (pc==0) {
+					}
+					
+					uint op = code[pc++];
 					OpCode opcode = (OpCode)(op & InstructionMask);
 					
 					uint A = (op & AMask) >> 6;
@@ -405,6 +417,19 @@ namespace ManagedLua.Interpreter {
 							break;
 						}
 							
+					case OpCode.SETGLOBAL: {
+							Constant c = f.Constants[Bx];
+							globals[c.Value] = Stack[iA];
+							break;
+						}
+							
+					case OpCode.NEWTABLE: {
+							//Size parameters are ignored, it is only an optimization
+							Table t = new Table();
+							Stack[iA] = t;
+							break;
+					}
+							
 					case OpCode.GETTABLE: {
 							Table t = (Table)Stack[iB];
 							object index;
@@ -419,12 +444,97 @@ namespace ManagedLua.Interpreter {
 							break;
 						}
 							
+					case OpCode.SETTABLE: {
+							Table t = (Table)Stack[iA];
+							object index;
+							if (B_const) {
+								index = f.Constants[iB_RK].Value;
+							}
+							else {
+								index = Stack[iB_RK];
+							}
+							t[index] = C_const ? f.Constants[iC_RK].Value : Stack[iC_RK];
+							break;
+						}
+							
+					case OpCode.SETLIST: {
+							double block_start;
+							if (C > 0) {
+								block_start = (C-1)*LFIELDS_PER_FLUSH;
+							}
+							else {
+								uint nextNum = code[pc++];
+								//TODO: nextNum or nextNum-1?
+								block_start = (nextNum-1)*LFIELDS_PER_FLUSH;
+							}
+							
+							Table t = (Table)Stack[iA];
+							
+							if (B > 0) {
+								for (int i = 1; i <= B; ++i) {
+									t[(double)i] = Stack[iA+i];
+								}
+							}
+							else {
+								for (int i = 1; i + iA < Stack.Count; ++i) {
+									t[(double)i] = Stack[iA+i];
+								}
+							}
+							break;
+					}
+							
 					case OpCode.LOADK:
 							Stack[iA] = f.Constants[Bx].Value;
 							break;
+					
+					case OpCode.LOADBOOL:
+							Stack[iA] = B != 0;
+							if (C != 0) {
+								++pc;
+							}
+							break;
+							
+					case OpCode.ADD:
+					case OpCode.SUB:
+					case OpCode.MUL:
+					case OpCode.DIV:
+					case OpCode.MOD:
+					case OpCode.POW: {
+							double op1 = (double)(B_const ? f.Constants[iB_RK].Value : Stack[iB_RK]);
+							double op2 = (double)(C_const ? f.Constants[iC_RK].Value : Stack[iC_RK]);
+							double result;
+							switch(opcode) {
+								case OpCode.ADD:
+									result = op1 + op2;
+									break;
+								case OpCode.SUB:
+									result = op1 - op2;
+									break;
+								case OpCode.MUL:
+									result = op1 * op2;
+									break;
+								case OpCode.DIV:
+									result = op1 / op2;
+									break;
+								case OpCode.MOD:
+									result = op1 % op2;
+									break;
+								case OpCode.POW:
+									result = Math.Pow(op1, op2);
+									break;
+								default:
+									throw new Exception("Opcode mismatch");
+							}
+							Stack[iA] = result;
+							break;
+						}
+							
+					case OpCode.JMP:
+						pc += sBx;
+						break;
 							
 					case OpCode.CALL: {
-							ClosureBase c = (ClosureBase)Stack[iA];
+							ClosureBase c = ((ClosureBase)Stack[iA]).CreateCallableInstance();
 							c.Prepare();
 							//Push params
 							if (B >= 1) {
@@ -457,17 +567,39 @@ namespace ManagedLua.Interpreter {
 							List<object> ret = new List<object>();
 							if (B >= 0) {
 								for (int i = 0; i < B-1; ++i) {
-									ret.Add(Stack[iA+i+1]);
+									ret.Add(Stack[iA+i]);
 								}
 							}
 							else {
-								for (int i = 0; iA+i+1 < Stack.Count; ++i) {
-									ret.Add(Stack[iA+i+1]);
+								for (int i = 0; iA+i < Stack.Count; ++i) {
+									ret.Add(Stack[iA+i]);
 								}
 							}
 							Stack.Clear();
 							Stack.AddRange(ret);
 							return;
+						}
+						
+					case OpCode.LT:
+					case OpCode.LE:
+					case OpCode.EQ: {
+						object op1 = (B_const ? f.Constants[iB_RK].Value : Stack[iB_RK]);
+						object op2 = (C_const ? f.Constants[iC_RK].Value : Stack[iC_RK]);
+						bool opA = A != 0;
+						if (opcode == OpCode.LT && (LessThan(op1, op2) != opA)) ++pc;
+						if (opcode == OpCode.LE && (LessThanEquals(op1, op2) != opA)) ++pc;
+						if (opcode == OpCode.EQ && (VirtualMachine.Equals(op1, op2) != opA)) ++pc;
+						break;
+					}
+							
+					case OpCode.TEST: {
+							bool bC = C != 0;
+							bool bA = ToBool(Stack[iA]);
+							if (bC != bA) {
+								++pc;
+							}
+							//Next OpCode is JMP
+							break;
 						}
 						
 					case OpCode.FORPREP:
@@ -483,11 +615,58 @@ namespace ManagedLua.Interpreter {
 							}
 							break;
 							
+					case OpCode.CLOSURE: {
+							Function cl_f = f.Functions[iBx];
+							FunctionClosure cl = new FunctionClosure(globals, cl_f);
+							Stack[iA] = cl;
+							break;
+					}
+							
 					default:
 							throw new NotImplementedException(string.Format("OpCode {0} ({1}) is not supported", (int)opcode, opcode, opcode.ToString()));
 					}
 				}
 			}
+		}
+	
+		private static bool ToBool(object value) {
+			if (value.Equals(false) || value == Nil.Value || value == null) return false;
+			else return true;
+		}
+		
+		private static bool LessThan(object op1, object op2) {
+			if (op1 is double && op2 is double) {
+				return (double)op1 < (double)op2;
+			}
+			if (op1 is string && op2 is string) {
+				return string.Compare((string)op1, (string)op2) < 0;
+			}
+			throw new ArgumentException(string.Format("Cannot compare {0} and {1}", op1.GetType(), op2.GetType()));
+		}
+		
+		private static bool LessThanEquals(object op1, object op2) {
+			if (op1 is double && op2 is double) {
+				return (double)op1 <= (double)op2;
+			}
+			if (op1 is string && op2 is string) {
+				return string.Compare((string)op1, (string)op2) <= 0;
+			}
+			throw new ArgumentException(string.Format("Cannot compare {0} and {1}", op1.GetType(), op2.GetType()));
+		}
+		
+		private static new bool Equals(object op1, object op2) {
+			/*if (op1.GetType() != op2.GetType()) return false;
+			if (op1 is double && op2 is double) {
+				return (double)op1 == (double)op2;
+			}
+			if (op1 is string && op2 is string) {
+				return string.Compare((string)op1, (string)op2) == 0;
+			}
+			if (op1 is bool && op2 is bool) {
+				return (bool)op1 == (bool)op2;
+			}*/
+			//Metamethods are not supported yet
+			return op1.Equals(op2);
 		}
 
 

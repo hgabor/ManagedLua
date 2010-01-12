@@ -44,6 +44,9 @@
   <ItemGroup>
     <Folder Include="Types" />
     <Compile Include="StdLib.cs" />
+    <Compile Include="StdLib.file.cs" />
+    <Compile Include="StdLib.io.cs" />
+    <Compile Include="StdLib.math.cs" />
     <Compile Include="StdLib.table.cs" />
     <Compile Include="Types\Closure.cs" />
     <Compile Include="Types\Nil.cs" />
