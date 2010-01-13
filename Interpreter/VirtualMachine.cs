@@ -238,8 +238,43 @@ namespace ManagedLua.Interpreter {
 		const byte LUA_TBOOLEAN = 1;
 		const byte LUA_TNUMBER = 3;
 		const byte LUA_TSTRING = 4;
+		//TODO: outfactor it
 		private struct Constant {
 			public object Value;
+		}
+		
+		private class UpValue {
+			private object value = Nil.Value;
+			private List<object> stack;
+			private int stackIndex;
+			private bool closed = false;
+			
+			public UpValue(List<object> stack, int stackIndex) {
+				this.stack = stack;
+				this.stackIndex = stackIndex;
+			}
+			
+			public void CloseIfIndexGreaterThanOrEquals(int i) {
+				if (!closed && stackIndex >= i) Close();
+			}
+			
+			public void Close() {
+				if (closed) return;
+				value = stack[stackIndex];
+				stack = null;
+				closed = true;
+			}
+			
+			public object Value {
+				get {
+					if (closed) return this.value;
+					else return stack[stackIndex];
+				}
+				set {
+					if (closed) this.value = value;
+					else stack[stackIndex] = value;
+				}
+			}
 		}
 
 		private Constant[] ReadConstants(Stream s) {
@@ -276,14 +311,16 @@ namespace ManagedLua.Interpreter {
 					return stack;
 				}
 			}
+			protected int Top {get;set;}
 			
 			public virtual void Prepare() {
 				stack = new List<object>();
-				
+				Top = 0;
 			}
 			
 			public void AddParam(object o) {
 				stack.Add(o);
+				Top++;
 			}
 			
 			public List<object> GetResults() {
@@ -368,7 +405,26 @@ namespace ManagedLua.Interpreter {
 			public override void Prepare() {
 				base.Prepare();
 				pc = 0;
+				newUpvalues = new List<UpValue>();
 			}
+			
+			List<UpValue> upValues = new List<UpValue>();
+			public void AddUpValue(UpValue uv) {
+				upValues.Add(uv);
+			}
+			public bool NeedsMoreUpValues {
+				get {
+					return upValues.Count != f.UpValues;
+				}
+			}
+			
+			List<UpValue> newUpvalues;
+			void AddNewUpValue(UpValue uv) {
+				if (!newUpvalues.Exists(o => o.Value.Equals(uv))) {
+					newUpvalues.Add(uv);
+				}
+			}
+
 			
 			const double LFIELDS_PER_FLUSH = 50;
 			public override void Run() {
@@ -379,6 +435,8 @@ namespace ManagedLua.Interpreter {
 				
 				if (pc==0) {
 				}
+				
+				FunctionClosure creatingClosure = null;
 				while (pc < cSize) {
 					if (pc==0) {
 					}
@@ -404,6 +462,28 @@ namespace ManagedLua.Interpreter {
 					bool C_const = (C & MSB) != 0;
 					uint C_RK = C & ~MSB;
 					int iC_RK = (int)C_RK;
+					
+					
+					
+					if (creatingClosure != null) {
+						if (creatingClosure.NeedsMoreUpValues) {
+							if (opcode == OpCode.MOVE) {
+								UpValue uv = new UpValue(this.Stack, iB);
+								creatingClosure.AddUpValue(uv);
+								this.AddNewUpValue(uv);
+							}
+							else if (opcode == OpCode.GETUPVAL) {
+								creatingClosure.AddUpValue(this.newUpvalues[iB]);
+							}
+							else {
+								throw new MalformedChunkException();
+							}
+							continue;
+						}
+						else {
+							creatingClosure = null;
+						}
+					}
 					
 					switch(opcode) {
 					case OpCode.MOVE: {
@@ -476,7 +556,7 @@ namespace ManagedLua.Interpreter {
 								}
 							}
 							else {
-								for (int i = 1; i + iA < Stack.Count; ++i) {
+								for (int i = 1; i < Top; ++i) {
 									t[(double)i] = Stack[iA+i];
 								}
 							}
@@ -494,6 +574,14 @@ namespace ManagedLua.Interpreter {
 							}
 							break;
 							
+					case OpCode.GETUPVAL:
+							Stack[iA] = upValues[iB].Value;
+							break;
+							
+					case OpCode.SETUPVAL:
+							upValues[iB].Value = Stack[iA];
+							break;
+					
 					case OpCode.ADD:
 					case OpCode.SUB:
 					case OpCode.MUL:
@@ -543,7 +631,7 @@ namespace ManagedLua.Interpreter {
 								}
 							}
 							else {
-								for (int i = 0; iA+i+1 < Stack.Count; ++i) {
+								for (int i = 0; iA+i+1 < Top; ++i) {
 									c.AddParam(Stack[iA+i+1]);
 								}
 							}
@@ -551,12 +639,14 @@ namespace ManagedLua.Interpreter {
 							//Pop results
 							var result = c.GetResults();
 							if (C >= 1) {
+								Top = iA + iC - 1;
 								for (int i = 0; i < C-1; ++i) {
 									Stack[iA+i] = result[i];
 								}
 							}
 							else {
-								for (int i = 0; iA+i < Stack.Count; ++i) {
+								Top = iA + result.Count;
+								for (int i = 0; i < result.Count; ++i) {
 									Stack[iA+i] = result[i];
 								}
 							}
@@ -571,10 +661,14 @@ namespace ManagedLua.Interpreter {
 								}
 							}
 							else {
-								for (int i = 0; iA+i < Stack.Count; ++i) {
+								for (int i = 0; i < Top; ++i) {
 									ret.Add(Stack[iA+i]);
 								}
 							}
+							foreach (var uv in newUpvalues) {
+								uv.Close();
+							}
+							
 							Stack.Clear();
 							Stack.AddRange(ret);
 							return;
@@ -619,6 +713,17 @@ namespace ManagedLua.Interpreter {
 							Function cl_f = f.Functions[iBx];
 							FunctionClosure cl = new FunctionClosure(globals, cl_f);
 							Stack[iA] = cl;
+							
+							//Set upvalues
+							creatingClosure = cl;
+							
+							break;
+					}
+							
+					case OpCode.CLOSE: {
+							foreach (var uv in newUpvalues) {
+								uv.CloseIfIndexGreaterThanOrEquals(iA);
+							}
 							break;
 					}
 							

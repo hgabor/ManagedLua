@@ -46,6 +46,9 @@
       <CopyToOutputDirectory>Never</CopyToOutputDirectory>
     </Compile>
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <None Include="closure.luac">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Include="echo.luac">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
