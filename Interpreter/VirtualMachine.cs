@@ -651,13 +651,13 @@ namespace ManagedLua.Interpreter {
 							
 					case OpCode.RETURN: {
 							List<object> ret = new List<object>();
-							if (B >= 0) {
+							if (B > 0) {
 								for (int i = 0; i < B-1; ++i) {
 									ret.Add(Stack[iA+i]);
 								}
 							}
 							else {
-								for (int i = 0; i < Top; ++i) {
+								for (int i = 0; iA + i < Top; ++i) {
 									ret.Add(Stack[iA+i]);
 								}
 							}
@@ -669,6 +669,11 @@ namespace ManagedLua.Interpreter {
 							Stack.AddRange(ret);
 							return;
 						}
+						
+					case OpCode.TAILCALL:
+						//Optimization only: always followed by a RETURN.
+						//TODO: optimize it
+						goto case OpCode.CALL;
 						
 					case OpCode.LT:
 					case OpCode.LE:

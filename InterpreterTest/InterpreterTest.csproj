@@ -52,6 +52,9 @@
     <None Include="echo.luac">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Include="factorial.luac">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Include="hello.luac">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

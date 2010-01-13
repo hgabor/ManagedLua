@@ -19,10 +19,10 @@ namespace ManagedLua.InterpreterTest {
 			Interpreter.VirtualMachine vm = new Interpreter.VirtualMachine(Environment.GetCommandLineArgs());
 			
 			string[] luacFiles = new string[] {
-				"hello.luac", "echo.luac", "sort.luac", "closure.luac"
+				"hello.luac", "echo.luac", "sort.luac", "closure.luac", "factorial.luac"
 			};
 			
-			vm.Run(System.IO.File.ReadAllBytes(luacFiles[3]));
+			vm.Run(System.IO.File.ReadAllBytes(luacFiles[4]));
 			
 			Console.WriteLine("End");
 			Console.ReadKey();
