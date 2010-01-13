@@ -135,7 +135,7 @@ namespace ManagedLua.Interpreter {
 			public byte MaxStackSize;
 
 			public uint[] Code;
-			public Constant[] Constants;
+			public object[] Constants;
 			public Function[] Functions;
 		}
 
@@ -238,10 +238,6 @@ namespace ManagedLua.Interpreter {
 		const byte LUA_TBOOLEAN = 1;
 		const byte LUA_TNUMBER = 3;
 		const byte LUA_TSTRING = 4;
-		//TODO: outfactor it
-		private struct Constant {
-			public object Value;
-		}
 		
 		private class UpValue {
 			private object value = Nil.Value;
@@ -277,25 +273,25 @@ namespace ManagedLua.Interpreter {
 			}
 		}
 
-		private Constant[] ReadConstants(Stream s) {
+		private object[] ReadConstants(Stream s) {
 			int size = ReadInt(s);
-			Constant[] ret = new Constant[size];
+			object[] ret = new object[size];
 			for (int i = 0; i < size; ++i) {
 				byte t = (byte)s.ReadByte();
-				Constant c = new Constant();
+				object c = null;
 				switch (t) {
 				case LUA_TNIL:
-					c.Value = Nil.Value;
+					c = Nil.Value;
 					break;
 				case LUA_TBOOLEAN:
 					byte b = (byte)s.ReadByte();
-					c.Value = b == 1;
+					c = b == 1;
 					break;
 				case LUA_TNUMBER:
-					c.Value = ReadNum(s);
+					c = ReadNum(s);
 					break;
 				case LUA_TSTRING:
-					c.Value = ReadString(s);
+					c = ReadString(s);
 					break;
 				}
 				ret[i] = c;
@@ -492,14 +488,14 @@ namespace ManagedLua.Interpreter {
 						}
 							
 					case OpCode.GETGLOBAL: {
-							Constant c = f.Constants[Bx];
-							Stack[iA] = globals[c.Value];
+							object c = f.Constants[Bx];
+							Stack[iA] = globals[c];
 							break;
 						}
 							
 					case OpCode.SETGLOBAL: {
-							Constant c = f.Constants[Bx];
-							globals[c.Value] = Stack[iA];
+							object c = f.Constants[Bx];
+							globals[c] = Stack[iA];
 							break;
 						}
 							
@@ -514,7 +510,7 @@ namespace ManagedLua.Interpreter {
 							Table t = (Table)Stack[iB];
 							object index;
 							if (C_const) {
-								index = f.Constants[iC_RK].Value;
+								index = f.Constants[iC_RK];
 							}
 							else {
 								index = Stack[iC_RK];
@@ -528,12 +524,12 @@ namespace ManagedLua.Interpreter {
 							Table t = (Table)Stack[iA];
 							object index;
 							if (B_const) {
-								index = f.Constants[iB_RK].Value;
+								index = f.Constants[iB_RK];
 							}
 							else {
 								index = Stack[iB_RK];
 							}
-							t[index] = C_const ? f.Constants[iC_RK].Value : Stack[iC_RK];
+							t[index] = C_const ? f.Constants[iC_RK] : Stack[iC_RK];
 							break;
 						}
 							
@@ -564,7 +560,7 @@ namespace ManagedLua.Interpreter {
 					}
 							
 					case OpCode.LOADK:
-							Stack[iA] = f.Constants[Bx].Value;
+							Stack[iA] = f.Constants[Bx];
 							break;
 					
 					case OpCode.LOADBOOL:
@@ -588,8 +584,8 @@ namespace ManagedLua.Interpreter {
 					case OpCode.DIV:
 					case OpCode.MOD:
 					case OpCode.POW: {
-							double op1 = (double)(B_const ? f.Constants[iB_RK].Value : Stack[iB_RK]);
-							double op2 = (double)(C_const ? f.Constants[iC_RK].Value : Stack[iC_RK]);
+							double op1 = (double)(B_const ? f.Constants[iB_RK] : Stack[iB_RK]);
+							double op2 = (double)(C_const ? f.Constants[iC_RK] : Stack[iC_RK]);
 							double result;
 							switch(opcode) {
 								case OpCode.ADD:
@@ -677,8 +673,8 @@ namespace ManagedLua.Interpreter {
 					case OpCode.LT:
 					case OpCode.LE:
 					case OpCode.EQ: {
-						object op1 = (B_const ? f.Constants[iB_RK].Value : Stack[iB_RK]);
-						object op2 = (C_const ? f.Constants[iC_RK].Value : Stack[iC_RK]);
+						object op1 = (B_const ? f.Constants[iB_RK] : Stack[iB_RK]);
+						object op2 = (C_const ? f.Constants[iC_RK] : Stack[iC_RK]);
 						bool opA = A != 0;
 						if (opcode == OpCode.LT && (LessThan(op1, op2) != opA)) ++pc;
 						if (opcode == OpCode.LE && (LessThanEquals(op1, op2) != opA)) ++pc;
