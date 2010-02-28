@@ -58,6 +58,9 @@
     <None Include="hello.luac">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Include="obj.luac">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Include="sort.luac">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

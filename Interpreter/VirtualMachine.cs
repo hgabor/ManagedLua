@@ -401,7 +401,7 @@ namespace ManagedLua.Interpreter {
 			public override void Prepare() {
 				base.Prepare();
 				pc = 0;
-				newUpvalues = new List<UpValue>();
+				newUpValues = new List<UpValue>();
 			}
 			
 			List<UpValue> upValues = new List<UpValue>();
@@ -414,10 +414,10 @@ namespace ManagedLua.Interpreter {
 				}
 			}
 			
-			List<UpValue> newUpvalues;
+			List<UpValue> newUpValues;
 			void AddNewUpValue(UpValue uv) {
-				if (!newUpvalues.Exists(o => o.Value.Equals(uv))) {
-					newUpvalues.Add(uv);
+				if (!newUpValues.Exists(o => o.Value.Equals(uv))) {
+					newUpValues.Add(uv);
 				}
 			}
 
@@ -469,7 +469,7 @@ namespace ManagedLua.Interpreter {
 								this.AddNewUpValue(uv);
 							}
 							else if (opcode == OpCode.GETUPVAL) {
-								creatingClosure.AddUpValue(this.newUpvalues[iB]);
+								creatingClosure.AddUpValue(this.newUpValues[iB]);
 							}
 							else {
 								throw new MalformedChunkException();
@@ -617,6 +617,14 @@ namespace ManagedLua.Interpreter {
 						pc += sBx;
 						break;
 							
+					case OpCode.SELF: {
+						Table t = (Table)Stack[iB];
+						var tKey = C_const ? f.Constants[iC_RK] : Stack[iC_RK];
+						Stack[iA] = t[tKey];
+						Stack[iA+1] = t;
+						break;
+					}
+						
 					case OpCode.CALL: {
 							ClosureBase c = ((ClosureBase)Stack[iA]).CreateCallableInstance();
 							c.Prepare();
@@ -661,7 +669,7 @@ namespace ManagedLua.Interpreter {
 									ret.Add(Stack[iA+i]);
 								}
 							}
-							foreach (var uv in newUpvalues) {
+							foreach (var uv in newUpValues) {
 								uv.Close();
 							}
 							
@@ -722,7 +730,7 @@ namespace ManagedLua.Interpreter {
 					}
 							
 					case OpCode.CLOSE: {
-							foreach (var uv in newUpvalues) {
+							foreach (var uv in newUpValues) {
 								uv.CloseIfIndexGreaterThanOrEquals(iA);
 							}
 							break;

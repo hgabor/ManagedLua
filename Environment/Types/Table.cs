@@ -21,6 +21,15 @@ namespace ManagedLua.Environment.Types {
 			get {
 				if (d.Contains(key))
 					return d[key];
+				else if (metatable != null) {
+					object o = metatable["__index"];
+					if (o is Table) {
+						return ((Table)o)[key];
+					}
+					else {
+						return Nil.Value;
+					}
+				}
 				else
 					return Nil.Value;
 			}
@@ -38,6 +47,19 @@ namespace ManagedLua.Environment.Types {
 					}
 					i++;
 				}
+			}
+		}
+		
+		private Table metatable;
+		public Table Metatable {
+			get {
+				return metatable;
+			}
+			set {
+				if (metatable != null) {
+					throw new InvalidOperationException("Table already has a metatable");
+				}
+				metatable = value;
 			}
 		}
 	}
