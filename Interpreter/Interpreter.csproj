@@ -43,6 +43,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="VirtualMachine.cs" />
+    <Compile Include="VirtualMachine.Helpers.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Environment\Environment.csproj">

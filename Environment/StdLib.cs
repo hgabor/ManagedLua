@@ -22,6 +22,7 @@ namespace ManagedLua.Environment {
 			Console.WriteLine(string.Join("\t", s));
 		}
 		
+		//TODO: Metatable for UserData
 		[Lib("setmetatable")]
 		public object setmetatable(object t, Table mt) {
 			if (t is Table) {

@@ -9,20 +9,26 @@ using ManagedLua.Environment.Types;
 
 namespace ManagedLua.Interpreter {
 
-
+	/// <summary>
+	/// Thrown when the byte stream cannot be interpreted as valid lua bytecode.
+	/// </summary>
 	public class MalformedChunkException: Exception {
 		public MalformedChunkException(): base("The byte stream is not a valid lua chunk!") {}
 		public MalformedChunkException(Exception innerException): base("The byte stream is not a valid lua chunk!", innerException) {}
 	}
 
 	/// <summary>
-	/// Description of VirtualMachine.
+	/// Virtual machine for lua bytecode.
 	/// </summary>
-	public class VirtualMachine {
+	public partial class VirtualMachine {
 		
 		Table globals = new ManagedLua.Environment.Types.Table();
 		List<object> stack = new List<object>();
 		
+		/// <summary>
+		/// Creates an instance of the interpreter.
+		/// </summary>
+		/// <param name="in_args">Arguments passed to the script (e.g. through the command line)</param>
 		public VirtualMachine(string[] in_args) {
 			LoadStdLib();
 			
@@ -34,6 +40,9 @@ namespace ManagedLua.Interpreter {
 			globals["arg"] = arg;
 		}
 		
+		/// <summary>
+		/// Loads the standard library functions into the lua environment.
+		/// </summary>
 		private void LoadStdLib() {
 			var std = new StdLib();
 			foreach(var m in typeof(StdLib).GetMethods()) {
@@ -54,27 +63,20 @@ namespace ManagedLua.Interpreter {
 			io["stdout"] = std.StdOut;
 		}
 
+		/// <summary>
+		/// Loads and runs a lua chunk.
+		/// </summary>
+		/// <param name="code">The lua chunk</param>
+		/// <exception cref="MalformedChunkException">The byte array is not a valid chunk</exception>
 		public void Run(byte[] code) {
 			Run(new MemoryStream(code, false));
 		}
 
-		const int HEADER_SIG = 0x1B4C7561;
-		static readonly int[] SUPPORTED_VERSIONS = {
-			0x51
-		};
-
-		private struct Headers {
-			public byte Version;
-			public byte Format;
-			public byte Endian;
-			public byte IntSize;
-			public byte Size_tSize;
-			public byte InstructionSize;
-			public byte NumberSize;
-			public bool IsIntegral;
-		}
-
-
+		/// <summary>
+		/// Loads and runs a lua chunk.
+		/// </summary>
+		/// <param name="s">The stream containing the chunk</param>
+		/// <exception cref="MalformedChunkException">The stream's output is not a valid chunk</exception>
 		public void Run(Stream s) {
 			try {
 				Headers h = ReadHeaders(s);
@@ -103,6 +105,49 @@ namespace ManagedLua.Interpreter {
 			}
 		}
 
+		
+		#region Chunk Declarations
+
+		const int HEADER_SIG = 0x1B4C7561;
+		static readonly int[] SUPPORTED_VERSIONS = {
+			0x51
+		};
+
+		private struct Headers {
+			public byte Version;
+			public byte Format;
+			public byte Endian;
+			public byte IntSize;
+			public byte Size_tSize;
+			public byte InstructionSize;
+			public byte NumberSize;
+			public bool IsIntegral;
+		}
+
+		private struct Function {
+			public byte UpValues;
+			public byte Parameters;
+			public byte IsVarargFlag;
+			public byte MaxStackSize;
+
+			public uint[] Code;
+			public object[] Constants;
+			public Function[] Functions;
+		}
+
+		const byte VARARG_HASARG = 1;
+		const byte VARARG_ISVARARG = 2;
+		const byte VARARG_NEEDSARG = 4;
+		
+		const byte LUA_TNIL = 0;
+		const byte LUA_TBOOLEAN = 1;
+		const byte LUA_TNUMBER = 3;
+		const byte LUA_TSTRING = 4;
+
+		#endregion
+
+		#region Chunk Readers
+		
 		private Headers ReadHeaders(Stream s) {
 			byte[] buffer = new byte[12];
 			int sig;
@@ -128,20 +173,6 @@ namespace ManagedLua.Interpreter {
 			};
 		}
 
-		private struct Function {
-			public byte UpValues;
-			public byte Parameters;
-			public byte IsVarargFlag;
-			public byte MaxStackSize;
-
-			public uint[] Code;
-			public object[] Constants;
-			public Function[] Functions;
-		}
-
-		const byte VARARG_HASARG = 1;
-		const byte VARARG_ISVARARG = 2;
-		const byte VARARG_NEEDSARG = 4;
 		private Function ReadFunction(Stream s) {
 			string srcName = ReadString(s);
 			int lineDefined = ReadInt(s);
@@ -233,11 +264,6 @@ namespace ManagedLua.Interpreter {
 			}
 			return code;
 		}
-
-		const byte LUA_TNIL = 0;
-		const byte LUA_TBOOLEAN = 1;
-		const byte LUA_TNUMBER = 3;
-		const byte LUA_TSTRING = 4;
 		
 		private class UpValue {
 			private object value = Nil.Value;
@@ -299,7 +325,15 @@ namespace ManagedLua.Interpreter {
 			return ret;
 		}
 		
+		#endregion
+		
+		/// <summary>
+		/// Provides common operations for function/closure calls.
+		/// To call a function, you first have to create a callable
+		/// closure with the CreateCallableInstance() function.
+		/// </summary>
 		abstract class ClosureBase: Closure {
+			//TODO: IsPrototype check
 			private List<object> stack;
 			
 			protected List<object> Stack {
@@ -309,29 +343,54 @@ namespace ManagedLua.Interpreter {
 			}
 			protected int Top {get;set;}
 			
+			/// <summary>
+			/// Prepares the closure for function call:
+			/// Resets internal variables, clears the stack etc.
+			/// </summary>
 			public virtual void Prepare() {
 				stack = new List<object>();
 				Top = 0;
 			}
 			
+			/// <summary>
+			/// Pushes a parameter onto the function's stack.
+			/// </summary>
+			/// <param name="o">The object</param>
 			public void AddParam(object o) {
 				stack.Add(o);
 				Top++;
 			}
 			
+			/// <summary>
+			/// Returns the return value(s) of the function.
+			/// </summary>
+			/// <returns>The list of return values</returns>
 			public List<object> GetResults() {
 				return stack;
 			}
 			
+			/// <summary>
+			/// Creates a callable closure of the prototype.
+			/// Don't forget to call the Prepare method on the resulting Closure.
+			/// </summary>
+			/// <returns>The callable closure</returns>
 			public ClosureBase CreateCallableInstance() {
 				return (ClosureBase)this.MemberwiseClone();
 			}
 		}
 		
+		/// <summary>
+		/// Adapter class for an internal (managed) function.
+		/// </summary>
 		class InternalClosure: ClosureBase {
 			StdLib lib;
 			MethodInfo method;
 			
+			/// <summary>
+			/// Creates an InternalClosure instance.
+			/// </summary>
+			/// <param name="method">An StdLib method</param>
+			/// <param name="lib">An instance of the standard library</param>
 			public InternalClosure(MethodInfo method, StdLib lib) {
 				this.lib = lib;
 				this.method = method;
@@ -375,6 +434,9 @@ namespace ManagedLua.Interpreter {
 			}
 		}
 		
+		/// <summary>
+		/// A user defined closure
+		/// </summary>
 		class FunctionClosure: ClosureBase {
 			Function f;
 			uint[] code;
@@ -422,21 +484,22 @@ namespace ManagedLua.Interpreter {
 			}
 
 			
+			FunctionClosure creatingClosure;
 			const double LFIELDS_PER_FLUSH = 50;
+			bool started = false;
+			/// <summary>
+			/// Starts or continues a function.
+			/// </summary>
 			public override void Run() {
-				//Allocate stack
-				while (Stack.Count < f.MaxStackSize) {
-					Stack.Add(Nil.Value);
-				}
-				
-				if (pc==0) {
-				}
-				
-				FunctionClosure creatingClosure = null;
-				while (pc < cSize) {
-					if (pc==0) {
+				if (!started) {
+					//Allocate stack
+					while (Stack.Count < f.MaxStackSize) {
+						Stack.Add(Nil.Value);
 					}
-					
+					creatingClosure = null;
+				}
+				started = true;
+				while (pc < cSize) {
 					uint op = code[pc++];
 					OpCode opcode = (OpCode)(op & InstructionMask);
 					
@@ -482,30 +545,83 @@ namespace ManagedLua.Interpreter {
 					}
 					
 					switch(opcode) {
+							
+					/*
+					 * Notation:
+					 * R(A)		Register A
+					 * R(B)		Register B
+					 * R(C)		Register C
+					 * PC		Program Counter
+					 * K(n)		Constant number n
+					 * Up(n)	Upvalue number n
+					 * Gbl(s)	Global symbol s
+					 * RK(B)	Register B or constant
+					 * RK(C)	Register C or constant
+					 * sBx		Signed displacement, used for jumps
+					 * xx[yy]	xx table's yy element
+					 */
+							
+					#region Memory management
+							
+					/* 
+					 * MOVE A B
+					 * R(A) := R(B)
+					 * 
+					 * Secondary use (closures) is implemented at OpCode.CLOSURE
+					 */
 					case OpCode.MOVE: {
 							Stack[iA] = Stack[iB];
 							break;
 						}
 							
+					/* 
+					 * LOADK A Bx
+					 * R(A) := K(Bx)
+					 */
+					case OpCode.LOADK:
+							Stack[iA] = f.Constants[Bx];
+							break;
+					
+					/*
+					 * LOADBOOL A B C
+					 * R(A) := (bool)B;   if (C != 0) PC++
+					 */
+					case OpCode.LOADBOOL:
+							Stack[iA] = B != 0;
+							if (C != 0) {
+								++pc;
+							}
+							break;
+					
+					/*
+					 * LOADNIL A B
+					 * R(A) := ... := R(B) = nil
+					 */
+					case OpCode.LOADNIL:
+							goto default;
+
+					/*
+					 * GETUPVAL A B
+					 * R(A) := Up(B)
+					 */
+					case OpCode.GETUPVAL:
+							Stack[iA] = upValues[iB].Value;
+							break;
+
+					/*
+					 * GETGLOBAL A Bx
+					 * R(A) := Gbl(K(Bx))
+					 */
 					case OpCode.GETGLOBAL: {
 							object c = f.Constants[Bx];
 							Stack[iA] = globals[c];
 							break;
 						}
-							
-					case OpCode.SETGLOBAL: {
-							object c = f.Constants[Bx];
-							globals[c] = Stack[iA];
-							break;
-						}
-							
-					case OpCode.NEWTABLE: {
-							//Size parameters are ignored, it is only an optimization
-							Table t = new Table();
-							Stack[iA] = t;
-							break;
-					}
-							
+					
+					/*
+					 * A B C
+					 * R(A) := R(B)[RK(C)]
+					 */
 					case OpCode.GETTABLE: {
 							Table t = (Table)Stack[iB];
 							object index;
@@ -519,7 +635,29 @@ namespace ManagedLua.Interpreter {
 							Stack[iA] = t[index];
 							break;
 						}
+					
+					/*
+					 * SETGLOBAL A Bx
+					 * Gbl(K(Bx)) := R(A)
+					 */
+					case OpCode.SETGLOBAL: {
+							object c = f.Constants[Bx];
+							globals[c] = Stack[iA];
+							break;
+						}
 							
+					/*
+					 * SETUPVAL A B
+					 * Up(B) := R(A)
+					 */
+					case OpCode.SETUPVAL:
+							upValues[iB].Value = Stack[iA];
+							break;
+							
+					/*
+					 * SETTABLE A B C
+					 * R(A)[RK(B)] := RK(C)
+					 */
 					case OpCode.SETTABLE: {
 							Table t = (Table)Stack[iA];
 							object index;
@@ -533,51 +671,45 @@ namespace ManagedLua.Interpreter {
 							break;
 						}
 							
-					case OpCode.SETLIST: {
-							double block_start;
-							if (C > 0) {
-								block_start = (C-1)*LFIELDS_PER_FLUSH;
-							}
-							else {
-								uint nextNum = code[pc++];
-								//TODO: nextNum or nextNum-1?
-								block_start = (nextNum-1)*LFIELDS_PER_FLUSH;
-							}
-							
-							Table t = (Table)Stack[iA];
-							
-							if (B > 0) {
-								for (int i = 1; i <= B; ++i) {
-									t[(double)i] = Stack[iA+i];
-								}
-							}
-							else {
-								for (int i = 1; i < Top; ++i) {
-									t[(double)i] = Stack[iA+i];
-								}
-							}
+					/*
+					 * NEWTABLE A B C
+					 * R(A) := new Table(with array size B, hash size C)
+					 * 
+					 * B, C are floating point bytes: eeeeexxx
+					 * 1xxx * 2^(eeeee-1) if eeeee > 0
+					 * xxx                if eeeee == 0
+					 */
+					case OpCode.NEWTABLE: {
+							//Size parameters are ignored, it is only an optimization
+							Table t = new Table();
+							Stack[iA] = t;
 							break;
 					}
-							
-					case OpCode.LOADK:
-							Stack[iA] = f.Constants[Bx];
-							break;
 					
-					case OpCode.LOADBOOL:
-							Stack[iA] = B != 0;
-							if (C != 0) {
-								++pc;
-							}
-							break;
+					/*
+					 * SELF A B C
+					 * R(A+1) := R(B)
+					 * R(A) := R(B)[RK(C)]
+					 */
+					case OpCode.SELF: {
+						Table t = (Table)Stack[iB];
+						var tKey = C_const ? f.Constants[iC_RK] : Stack[iC_RK];
+						Stack[iA] = t[tKey];
+						Stack[iA+1] = t;
+						break;
+					}
 							
-					case OpCode.GETUPVAL:
-							Stack[iA] = upValues[iB].Value;
-							break;
-							
-					case OpCode.SETUPVAL:
-							upValues[iB].Value = Stack[iA];
-							break;
+					#endregion
 					
+					#region Arithmetic and Logic
+					
+					/*
+					 * OP A B C
+					 * R(A) := RK(B) op RK(C)
+					 * 
+					 * where: OP = ADD, SUB, MUL, DIV, MOD, POW
+					 *        op = +    -    *    /    %    ^
+					 */
 					case OpCode.ADD:
 					case OpCode.SUB:
 					case OpCode.MUL:
@@ -613,18 +745,84 @@ namespace ManagedLua.Interpreter {
 							break;
 						}
 							
+					/*
+					 * UNM A B
+					 * R(A) := -R(B)
+					 */
+					case OpCode.UNM:
+					/*
+					 * NOT A B
+					 * R(A) := not R(B)
+					 */
+					case OpCode.NOT:
+					/*
+					 * LEN A B
+					 * R(A) := length of R(B)
+					 */
+					case OpCode.LEN:
+					/*
+					 * CONCAT A B C
+					 * R(A) := R(B) .. (...) .. R(C), where R(B) ... R(C) are strings
+					 */
+					case OpCode.CONCAT:
+							goto default;
+							
+					#endregion
+							
+					#region Branching and jumping
+					
+					/*
+					 * JMP sBx
+					 * PC += sBx
+					 */
 					case OpCode.JMP:
 						pc += sBx;
 						break;
 							
-					case OpCode.SELF: {
-						Table t = (Table)Stack[iB];
-						var tKey = C_const ? f.Constants[iC_RK] : Stack[iC_RK];
-						Stack[iA] = t[tKey];
-						Stack[iA+1] = t;
+					/*
+					 * OP A B C
+					 * if (RK(B) op RK(C)) != A) then PC++
+					 * 
+					 * where OP: EQ, LT, LE
+					 *       op: ==, <,  <=
+					 */
+					case OpCode.EQ:
+					case OpCode.LT:
+					case OpCode.LE: {
+						object op1 = (B_const ? f.Constants[iB_RK] : Stack[iB_RK]);
+						object op2 = (C_const ? f.Constants[iC_RK] : Stack[iC_RK]);
+						bool opA = A != 0;
+						if (opcode == OpCode.LT && (LessThan(op1, op2) != opA)) ++pc;
+						if (opcode == OpCode.LE && (LessThanEquals(op1, op2) != opA)) ++pc;
+						if (opcode == OpCode.EQ && (VirtualMachine.Equals(op1, op2) != opA)) ++pc;
 						break;
 					}
+
+					/*
+					 * TEST A C
+					 * if (bool)R(A) != C then PC++
+					 */
+					case OpCode.TEST: {
+							bool bC = C != 0;
+							bool bA = ToBool(Stack[iA]);
+							if (bC != bA) {
+								++pc;
+							}
+							//Next OpCode is JMP
+							break;
+						}
+
+					/*
+					 * TESTSET A B C
+					 * if (bool)R(A) == C then R(A) := R(B) else PC++
+					 */
+					case OpCode.TESTSET:
+							goto default;
 						
+					/*
+					 * CALL A B C
+					 * R(A), ..., R(A+C-2) := R(A)(R(A+1), ..., R(A+B-1))
+					 */
 					case OpCode.CALL: {
 							ClosureBase c = ((ClosureBase)Stack[iA]).CreateCallableInstance();
 							c.Prepare();
@@ -656,7 +854,22 @@ namespace ManagedLua.Interpreter {
 							}
 							break;
 						}
-							
+
+					/*
+					 * TAILCALL A B C
+					 * return R(A)(R(A+1), ..., R(A+B-1))
+					 * 
+					 * Luac compiler always generates C=0
+					 */
+					case OpCode.TAILCALL:
+						//Optimization only: always followed by a RETURN.
+						//TODO: optimize it
+						goto case OpCode.CALL;
+
+					/*
+					 * RETURN A B
+					 * return R(A), ..., R(A+B-2)
+					 */
 					case OpCode.RETURN: {
 							List<object> ret = new List<object>();
 							if (B > 0) {
@@ -677,39 +890,14 @@ namespace ManagedLua.Interpreter {
 							Stack.AddRange(ret);
 							return;
 						}
-						
-					case OpCode.TAILCALL:
-						//Optimization only: always followed by a RETURN.
-						//TODO: optimize it
-						goto case OpCode.CALL;
-						
-					case OpCode.LT:
-					case OpCode.LE:
-					case OpCode.EQ: {
-						object op1 = (B_const ? f.Constants[iB_RK] : Stack[iB_RK]);
-						object op2 = (C_const ? f.Constants[iC_RK] : Stack[iC_RK]);
-						bool opA = A != 0;
-						if (opcode == OpCode.LT && (LessThan(op1, op2) != opA)) ++pc;
-						if (opcode == OpCode.LE && (LessThanEquals(op1, op2) != opA)) ++pc;
-						if (opcode == OpCode.EQ && (VirtualMachine.Equals(op1, op2) != opA)) ++pc;
-						break;
-					}
-							
-					case OpCode.TEST: {
-							bool bC = C != 0;
-							bool bA = ToBool(Stack[iA]);
-							if (bC != bA) {
-								++pc;
-							}
-							//Next OpCode is JMP
-							break;
-						}
-						
-					case OpCode.FORPREP:
-							Stack[iA] = (double)Stack[iA] - (double)Stack[iA+2];
-							pc += sBx;
-							break;
-							
+
+					/*
+					 * FORLOOP A sBx
+					 * R(A) += R(A+2)
+					 * if R(A) <= R(A+1) then
+					 *   PC += sBx
+					 *   R(A+3) := R(A)
+					 */
 					case OpCode.FORLOOP:
 							Stack[iA] = (double)Stack[iA] + (double)Stack[iA+2];
 							if ((double)Stack[iA] <= (double)Stack[iA+1]) {
@@ -717,7 +905,80 @@ namespace ManagedLua.Interpreter {
 								Stack[iA+3] = Stack[iA];
 							}
 							break;
+
+					/*
+					 * FORPREP A sBx
+					 * R(A) -= R(A+2)
+					 * PC += sBx
+					 */
+					case OpCode.FORPREP:
+							Stack[iA] = (double)Stack[iA] - (double)Stack[iA+2];
+							pc += sBx;
+							break;
 							
+					/*
+					 * TFORLOOP A C
+					 * R(A+3), ..., R(A+2+C) := R(A)(R(A+1), R(A+2))
+					 * if R(A+3) != nil then
+					 *   R(A+2) = R(A+3)
+					 * else
+					 *   PC++
+					 */
+					case OpCode.TFORLOOP:
+							goto default;
+							
+					#endregion
+							
+					#region Misc
+					
+					/*
+					 * SETLIST A B C
+					 * if C = 0 C := PC++
+					 * R(A)[(C-1)*FPF+i := R(A+i), 1 <= i <= B
+					 * where FPF = LFIELDS_PER_FLUSH
+					 */
+					case OpCode.SETLIST: {
+							double block_start;
+							if (C > 0) {
+								block_start = (C-1)*LFIELDS_PER_FLUSH;
+							}
+							else {
+								uint nextNum = code[pc++];
+								//TODO: nextNum or nextNum-1?
+								block_start = (nextNum-1)*LFIELDS_PER_FLUSH;
+							}
+							
+							Table t = (Table)Stack[iA];
+							
+							if (B > 0) {
+								for (int i = 1; i <= B; ++i) {
+									t[(double)i] = Stack[iA+i];
+								}
+							}
+							else {
+								for (int i = 1; i < Top; ++i) {
+									t[(double)i] = Stack[iA+i];
+								}
+							}
+							break;
+					}
+							
+					/*
+					 * CLOSE A
+					 * close all variables >= R(A)
+					 */
+					case OpCode.CLOSE: {
+							foreach (var uv in newUpValues) {
+								uv.CloseIfIndexGreaterThanOrEquals(iA);
+							}
+							break;
+					}
+					
+					/*
+					 * CLOSURE A Bx
+					 * R(A) := closure(Func(Bx), R(A), ..., R(A+n))
+					 * Special, see documentation for details
+					 */
 					case OpCode.CLOSURE: {
 							Function cl_f = f.Functions[iBx];
 							FunctionClosure cl = new FunctionClosure(globals, cl_f);
@@ -728,13 +989,15 @@ namespace ManagedLua.Interpreter {
 							
 							break;
 					}
-							
-					case OpCode.CLOSE: {
-							foreach (var uv in newUpValues) {
-								uv.CloseIfIndexGreaterThanOrEquals(iA);
-							}
-							break;
-					}
+					
+					/*
+					 * VARARG A B
+					 * R(A), ..., R(A+B-1) = vararg
+					 */
+					case OpCode.VARARG:
+						goto default;
+					
+					#endregion
 							
 					default:
 							throw new NotImplementedException(string.Format("OpCode {0} ({1}) is not supported", (int)opcode, opcode, opcode.ToString()));
@@ -743,46 +1006,6 @@ namespace ManagedLua.Interpreter {
 			}
 		}
 	
-		private static bool ToBool(object value) {
-			if (value.Equals(false) || value == Nil.Value || value == null) return false;
-			else return true;
-		}
-		
-		private static bool LessThan(object op1, object op2) {
-			if (op1 is double && op2 is double) {
-				return (double)op1 < (double)op2;
-			}
-			if (op1 is string && op2 is string) {
-				return string.Compare((string)op1, (string)op2) < 0;
-			}
-			throw new ArgumentException(string.Format("Cannot compare {0} and {1}", op1.GetType(), op2.GetType()));
-		}
-		
-		private static bool LessThanEquals(object op1, object op2) {
-			if (op1 is double && op2 is double) {
-				return (double)op1 <= (double)op2;
-			}
-			if (op1 is string && op2 is string) {
-				return string.Compare((string)op1, (string)op2) <= 0;
-			}
-			throw new ArgumentException(string.Format("Cannot compare {0} and {1}", op1.GetType(), op2.GetType()));
-		}
-		
-		private static new bool Equals(object op1, object op2) {
-			/*if (op1.GetType() != op2.GetType()) return false;
-			if (op1 is double && op2 is double) {
-				return (double)op1 == (double)op2;
-			}
-			if (op1 is string && op2 is string) {
-				return string.Compare((string)op1, (string)op2) == 0;
-			}
-			if (op1 is bool && op2 is bool) {
-				return (bool)op1 == (bool)op2;
-			}*/
-			//Metamethods are not supported yet
-			return op1.Equals(op2);
-		}
-
 
 		#region OPCODES
 
