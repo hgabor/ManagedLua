@@ -25,7 +25,7 @@ namespace ManagedLua.InterpreterTest {
 			var luacFiles = System.IO.Directory.GetFiles("../../tests", "*.luac");
 			
 			//foreach (string s in luacFiles) {
-			string s = luacFiles[0];
+			string s = luacFiles[5];
 			{
 				Console.WriteLine("Test {0}", s);
 				vm.Run(System.IO.File.ReadAllBytes("../tests/"+s));

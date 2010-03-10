@@ -50,6 +50,7 @@
     <Compile Include="StdLib.file.cs" />
     <Compile Include="StdLib.io.cs" />
     <Compile Include="StdLib.math.cs" />
+    <Compile Include="StdLib.os.cs" />
     <Compile Include="StdLib.string.cs" />
     <Compile Include="StdLib.table.cs" />
     <Compile Include="Types\Closure.cs" />

@@ -48,19 +48,23 @@ namespace ManagedLua.Interpreter {
 			foreach(var m in typeof(StdLib).GetMethods()) {
 				LibAttribute la = (LibAttribute)Array.Find(m.GetCustomAttributes(false), o => o is LibAttribute);
 				if (la == null) continue;
-				if (string.IsNullOrEmpty(la.Table)) {
-					globals[la.PublicName] = new InternalClosure(m, std);
-				}
-				else {
-					if (!globals.IsSet(la.Table)) {
-						globals[la.Table] = new Table();
-					}
-					Table t = (Table)globals[la.Table];
-					t[la.PublicName] = new InternalClosure(m, std);
-				}
+				RegisterFunction(m, std, la.Table, la.PublicName);
 			}
 			Table io = (Table)globals["io"];
 			io["stdout"] = std.StdOut;
+		}
+		
+		private void RegisterFunction(MethodInfo m, object host, string tableName, string funcName) {
+			if (string.IsNullOrEmpty(tableName)) {
+				globals[funcName] = new InternalClosure(m, host);
+			}
+			else {
+				if (!globals.IsSet(tableName)) {
+					globals[tableName] = new Table();
+				}
+				Table t = (Table)globals[tableName];
+				t[funcName] = new InternalClosure(m, host);
+			}
 		}
 
 		/// <summary>
@@ -383,7 +387,7 @@ namespace ManagedLua.Interpreter {
 		/// Adapter class for an internal (managed) function.
 		/// </summary>
 		class InternalClosure: ClosureBase {
-			StdLib lib;
+			object host;
 			MethodInfo method;
 			
 			/// <summary>
@@ -391,8 +395,8 @@ namespace ManagedLua.Interpreter {
 			/// </summary>
 			/// <param name="method">An StdLib method</param>
 			/// <param name="lib">An instance of the standard library</param>
-			public InternalClosure(MethodInfo method, StdLib lib) {
-				this.lib = lib;
+			public InternalClosure(MethodInfo method, object host) {
+				this.host = host;
 				this.method = method;
 			}
 			
@@ -426,7 +430,7 @@ namespace ManagedLua.Interpreter {
 				}
 				
 				object ret;
-				ret = method.Invoke(lib, callParams.ToArray());
+				ret = method.Invoke(host, callParams.ToArray());
 				
 				//TODO: multiple return values
 				Stack.Clear();
