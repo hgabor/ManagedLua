@@ -38,6 +38,9 @@
   </PropertyGroup>
   <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.Targets" />
   <ItemGroup>
+    <Reference Include="printf">
+      <HintPath>..\..\Common\printf.dll</HintPath>
+    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Xml" />
   </ItemGroup>
@@ -47,6 +50,7 @@
     <Compile Include="StdLib.file.cs" />
     <Compile Include="StdLib.io.cs" />
     <Compile Include="StdLib.math.cs" />
+    <Compile Include="StdLib.string.cs" />
     <Compile Include="StdLib.table.cs" />
     <Compile Include="Types\Closure.cs" />
     <Compile Include="Types\Nil.cs" />

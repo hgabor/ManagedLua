@@ -1,6 +1,7 @@
 ﻿
 using System;
 using System.Diagnostics;
+using System.IO;
 
 namespace ManagedLua.InterpreterTest {
 	class Program {
@@ -18,11 +19,19 @@ namespace ManagedLua.InterpreterTest {
 			//Console.WriteLine(Environment.GetCommandLineArgs().Length);
 			Interpreter.VirtualMachine vm = new Interpreter.VirtualMachine(Environment.GetCommandLineArgs());
 			
-			string[] luacFiles = new string[] {
+			/*string[] luacFiles = new string[] {
 				"hello.luac", "echo.luac", "sort.luac", "closure.luac", "factorial.luac", "obj.luac"
-			};
+			};*/
+			var luacFiles = System.IO.Directory.GetFiles("../../tests", "*.luac");
 			
-			vm.Run(System.IO.File.ReadAllBytes(luacFiles[5]));
+			//foreach (string s in luacFiles) {
+			string s = luacFiles[0];
+			{
+				Console.WriteLine("Test {0}", s);
+				vm.Run(System.IO.File.ReadAllBytes("../tests/"+s));
+				Console.WriteLine("End of test {0}", s);
+				Console.WriteLine();
+			}
 			
 			Console.WriteLine("End");
 			Console.ReadKey();

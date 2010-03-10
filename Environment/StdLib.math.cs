@@ -6,6 +6,11 @@ namespace ManagedLua.Environment {
 		
 		private Random random = new Random();
 			
+		[Lib("math", "abs")]
+		public double math_abs(double d) {
+			return Math.Abs(d);
+		}
+		
 		[Lib("math", "random")]
 		public double math_random(params object[] d) {
 			if (d.Length >= 3) throw new ArgumentException("To many arguments!");
