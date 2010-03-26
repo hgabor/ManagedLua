@@ -6,6 +6,6 @@ namespace ManagedLua.Environment.Types {
 	/// Description of Closure.
 	/// </summary>
 	public abstract class Closure {
-		public abstract void Run();
+		//public abstract void Run();
 	}
 }

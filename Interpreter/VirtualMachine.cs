@@ -38,6 +38,7 @@ namespace ManagedLua.Interpreter {
 				arg[i] = in_args[(int)i];
 			}
 			globals["arg"] = arg;
+			globals["_VERSION"] = "Lua 5.1";
 		}
 		
 		/// <summary>
@@ -98,11 +99,7 @@ namespace ManagedLua.Interpreter {
 
 				var topFunction = ReadFunction(s);
 				
-				FunctionClosure topClosure = new FunctionClosure(globals, topFunction);
-				
-				topClosure.Prepare();
-				topClosure.Run();
-
+				new LuaThread(globals, topFunction).Run();
 			}
 			catch (System.IO.IOException ex) {
 				throw new MalformedChunkException(ex);
@@ -340,12 +337,12 @@ namespace ManagedLua.Interpreter {
 			//TODO: IsPrototype check
 			private List<object> stack;
 			
-			protected List<object> Stack {
+			protected internal List<object> Stack {
 				get {
 					return stack;
 				}
 			}
-			protected int Top {get;set;}
+			protected internal int Top { get; set; }
 			
 			/// <summary>
 			/// Prepares the closure for function call:
@@ -400,7 +397,7 @@ namespace ManagedLua.Interpreter {
 				this.method = method;
 			}
 			
-			public override void Run() {
+			public void Run() {
 				var methodParams = method.GetParameters();
 				
 				var callParams = new List<object>();
@@ -442,23 +439,18 @@ namespace ManagedLua.Interpreter {
 		/// A user defined closure
 		/// </summary>
 		class FunctionClosure: ClosureBase {
-			Function f;
-			uint[] code;
-			int cSize;
-			int pc = 0;
+			internal Function f;
+			internal uint[] code;
+			internal int cSize;
+			internal int pc = 0;
 			
-			const int InstructionMask = 0x0000003F;
-			const uint AMask = 0x00003FC0;
-			const uint CMask = 0x007FC000;
-			const uint BMask = 0xFF800000;
-			const uint BxMask = 0xFFFFC000;
-			const uint MSB = 0x00000100;
-			const uint sBx0 = 131071;
+			internal int returnRegister;
+			internal int returnsSaved;
 			
-			Table globals;
+			internal Table env;
 			
-			public FunctionClosure(Table globals, Function f) {
-				this.globals = globals;
+			public FunctionClosure(Table env, Function f) {
+				this.env = env;
 				this.f = f;
 				this.code = f.Code;
 				cSize = code.Length;
@@ -470,7 +462,7 @@ namespace ManagedLua.Interpreter {
 				newUpValues = new List<UpValue>();
 			}
 			
-			List<UpValue> upValues = new List<UpValue>();
+			internal List<UpValue> upValues = new List<UpValue>();
 			public void AddUpValue(UpValue uv) {
 				upValues.Add(uv);
 			}
@@ -480,30 +472,49 @@ namespace ManagedLua.Interpreter {
 				}
 			}
 			
-			List<UpValue> newUpValues;
-			void AddNewUpValue(UpValue uv) {
+			internal List<UpValue> newUpValues;
+			internal void AddNewUpValue(UpValue uv) {
 				if (!newUpValues.Exists(o => o.Value.Equals(uv))) {
 					newUpValues.Add(uv);
 				}
 			}
-
+		}
+	
+		class LuaThread {
+			FunctionClosure func;
+			Stack<FunctionClosure> frames = new Stack<FunctionClosure>();
+			
+			const int InstructionMask = 0x0000003F;
+			const uint AMask = 0x00003FC0;
+			const uint CMask = 0x007FC000;
+			const uint BMask = 0xFF800000;
+			const uint BxMask = 0xFFFFC000;
+			const uint MSB = 0x00000100;
+			const uint sBx0 = 131071;
+			
+			uint[] code;
+			int cSize;
+			int pc;
+			
+			public LuaThread(Table env, Function f) {
+				func = new FunctionClosure(env, f);
+				func.Prepare();
+				this.code = f.Code;
+				cSize = code.Length;
+			}
 			
 			FunctionClosure creatingClosure;
 			const double LFIELDS_PER_FLUSH = 50;
-			bool started = false;
-			/// <summary>
-			/// Starts or continues a function.
-			/// </summary>
-			public override void Run() {
-				if (!started) {
-					//Allocate stack
-					while (Stack.Count < f.MaxStackSize) {
-						Stack.Add(Nil.Value);
-					}
-					creatingClosure = null;
-				}
-				started = true;
+			
+			public void Run() {
+				creatingClosure = null;
 				while (pc < cSize) {
+					if (pc == 0) {
+						while (func.Stack.Count < func.f.MaxStackSize) {
+							func.Stack.Add(Nil.Value);
+						}
+					}
+					
 					uint op = code[pc++];
 					OpCode opcode = (OpCode)(op & InstructionMask);
 					
@@ -531,12 +542,12 @@ namespace ManagedLua.Interpreter {
 					if (creatingClosure != null) {
 						if (creatingClosure.NeedsMoreUpValues) {
 							if (opcode == OpCode.MOVE) {
-								UpValue uv = new UpValue(this.Stack, iB);
+								UpValue uv = new UpValue(this.func.Stack, iB);
 								creatingClosure.AddUpValue(uv);
-								this.AddNewUpValue(uv);
+								this.func.AddNewUpValue(uv);
 							}
 							else if (opcode == OpCode.GETUPVAL) {
-								creatingClosure.AddUpValue(this.newUpValues[iB]);
+								creatingClosure.AddUpValue(this.func.newUpValues[iB]);
 							}
 							else {
 								throw new MalformedChunkException();
@@ -574,7 +585,7 @@ namespace ManagedLua.Interpreter {
 					 * Secondary use (closures) is implemented at OpCode.CLOSURE
 					 */
 					case OpCode.MOVE: {
-							Stack[iA] = Stack[iB];
+							func.Stack[iA] = func.Stack[iB];
 							break;
 						}
 							
@@ -583,7 +594,7 @@ namespace ManagedLua.Interpreter {
 					 * R(A) := K(Bx)
 					 */
 					case OpCode.LOADK:
-							Stack[iA] = f.Constants[Bx];
+							func.Stack[iA] = func.f.Constants[Bx];
 							break;
 					
 					/*
@@ -591,7 +602,7 @@ namespace ManagedLua.Interpreter {
 					 * R(A) := (bool)B;   if (C != 0) PC++
 					 */
 					case OpCode.LOADBOOL:
-							Stack[iA] = B != 0;
+							func.Stack[iA] = B != 0;
 							if (C != 0) {
 								++pc;
 							}
@@ -609,7 +620,7 @@ namespace ManagedLua.Interpreter {
 					 * R(A) := Up(B)
 					 */
 					case OpCode.GETUPVAL:
-							Stack[iA] = upValues[iB].Value;
+							func.Stack[iA] = func.upValues[iB].Value;
 							break;
 
 					/*
@@ -617,8 +628,8 @@ namespace ManagedLua.Interpreter {
 					 * R(A) := Gbl(K(Bx))
 					 */
 					case OpCode.GETGLOBAL: {
-							object c = f.Constants[Bx];
-							Stack[iA] = globals[c];
+							object c = func.f.Constants[Bx];
+							func.Stack[iA] = func.env[c];
 							break;
 						}
 					
@@ -627,16 +638,16 @@ namespace ManagedLua.Interpreter {
 					 * R(A) := R(B)[RK(C)]
 					 */
 					case OpCode.GETTABLE: {
-							Table t = (Table)Stack[iB];
+							Table t = (Table)func.Stack[iB];
 							object index;
 							if (C_const) {
-								index = f.Constants[iC_RK];
+								index = func.f.Constants[iC_RK];
 							}
 							else {
-								index = Stack[iC_RK];
+								index = func.Stack[iC_RK];
 							}
 							
-							Stack[iA] = t[index];
+							func.Stack[iA] = t[index];
 							break;
 						}
 					
@@ -645,8 +656,8 @@ namespace ManagedLua.Interpreter {
 					 * Gbl(K(Bx)) := R(A)
 					 */
 					case OpCode.SETGLOBAL: {
-							object c = f.Constants[Bx];
-							globals[c] = Stack[iA];
+							object c = func.f.Constants[Bx];
+							func.env[c] = func.Stack[iA];
 							break;
 						}
 							
@@ -655,7 +666,7 @@ namespace ManagedLua.Interpreter {
 					 * Up(B) := R(A)
 					 */
 					case OpCode.SETUPVAL:
-							upValues[iB].Value = Stack[iA];
+							func.upValues[iB].Value = func.Stack[iA];
 							break;
 							
 					/*
@@ -663,15 +674,15 @@ namespace ManagedLua.Interpreter {
 					 * R(A)[RK(B)] := RK(C)
 					 */
 					case OpCode.SETTABLE: {
-							Table t = (Table)Stack[iA];
+							Table t = (Table)func.Stack[iA];
 							object index;
 							if (B_const) {
-								index = f.Constants[iB_RK];
+								index = func.f.Constants[iB_RK];
 							}
 							else {
-								index = Stack[iB_RK];
+								index = func.Stack[iB_RK];
 							}
-							t[index] = C_const ? f.Constants[iC_RK] : Stack[iC_RK];
+							t[index] = C_const ? func.f.Constants[iC_RK] : func.Stack[iC_RK];
 							break;
 						}
 							
@@ -686,7 +697,7 @@ namespace ManagedLua.Interpreter {
 					case OpCode.NEWTABLE: {
 							//Size parameters are ignored, it is only an optimization
 							Table t = new Table();
-							Stack[iA] = t;
+							func.Stack[iA] = t;
 							break;
 					}
 					
@@ -696,10 +707,10 @@ namespace ManagedLua.Interpreter {
 					 * R(A) := R(B)[RK(C)]
 					 */
 					case OpCode.SELF: {
-						Table t = (Table)Stack[iB];
-						var tKey = C_const ? f.Constants[iC_RK] : Stack[iC_RK];
-						Stack[iA] = t[tKey];
-						Stack[iA+1] = t;
+						Table t = (Table)func.Stack[iB];
+						var tKey = C_const ? func.f.Constants[iC_RK] : func.Stack[iC_RK];
+						func.Stack[iA] = t[tKey];
+						func.Stack[iA+1] = t;
 						break;
 					}
 							
@@ -720,8 +731,8 @@ namespace ManagedLua.Interpreter {
 					case OpCode.DIV:
 					case OpCode.MOD:
 					case OpCode.POW: {
-							double op1 = (double)(B_const ? f.Constants[iB_RK] : Stack[iB_RK]);
-							double op2 = (double)(C_const ? f.Constants[iC_RK] : Stack[iC_RK]);
+							double op1 = (double)(B_const ? func.f.Constants[iB_RK] : func.Stack[iB_RK]);
+							double op2 = (double)(C_const ? func.f.Constants[iC_RK] : func.Stack[iC_RK]);
 							double result;
 							switch(opcode) {
 								case OpCode.ADD:
@@ -745,7 +756,7 @@ namespace ManagedLua.Interpreter {
 								default:
 									throw new Exception("Opcode mismatch");
 							}
-							Stack[iA] = result;
+							func.Stack[iA] = result;
 							break;
 						}
 							
@@ -793,8 +804,8 @@ namespace ManagedLua.Interpreter {
 					case OpCode.EQ:
 					case OpCode.LT:
 					case OpCode.LE: {
-						object op1 = (B_const ? f.Constants[iB_RK] : Stack[iB_RK]);
-						object op2 = (C_const ? f.Constants[iC_RK] : Stack[iC_RK]);
+						object op1 = (B_const ? func.f.Constants[iB_RK] : func.Stack[iB_RK]);
+						object op2 = (C_const ? func.f.Constants[iC_RK] : func.Stack[iC_RK]);
 						bool opA = A != 0;
 						if (opcode == OpCode.LT && (LessThan(op1, op2) != opA)) ++pc;
 						if (opcode == OpCode.LE && (LessThanEquals(op1, op2) != opA)) ++pc;
@@ -808,7 +819,7 @@ namespace ManagedLua.Interpreter {
 					 */
 					case OpCode.TEST: {
 							bool bC = C != 0;
-							bool bA = ToBool(Stack[iA]);
+							bool bA = ToBool(func.Stack[iA]);
 							if (bC != bA) {
 								++pc;
 							}
@@ -828,33 +839,49 @@ namespace ManagedLua.Interpreter {
 					 * R(A), ..., R(A+C-2) := R(A)(R(A+1), ..., R(A+B-1))
 					 */
 					case OpCode.CALL: {
-							ClosureBase c = ((ClosureBase)Stack[iA]).CreateCallableInstance();
+							ClosureBase c = ((ClosureBase)func.Stack[iA]).CreateCallableInstance();
 							c.Prepare();
 							//Push params
 							if (B >= 1) {
 								for (int i = 0; i < B-1; ++i) {
-									c.AddParam(Stack[iA+i+1]);
+									c.AddParam(func.Stack[iA+i+1]);
 								}
 							}
 							else {
-								for (int i = 0; iA+i+1 < Top; ++i) {
-									c.AddParam(Stack[iA+i+1]);
+								for (int i = 0; iA+i+1 < func.Top; ++i) {
+									c.AddParam(func.Stack[iA+i+1]);
 								}
 							}
-							c.Run();
-							//Pop results
-							var result = c.GetResults();
-							if (C >= 1) {
-								Top = iA + iC - 1;
-								for (int i = 0; i < C-1; ++i) {
-									Stack[iA+i] = result[i];
+							if (c is InternalClosure) {
+								((InternalClosure)c).Run();
+								//Pop results
+								var result = c.GetResults();
+								if (C >= 1) {
+									func.Top = iA + iC - 1;
+									for (int i = 0; i < C-1; ++i) {
+										func.Stack[iA+i] = result[i];
+									}
+								}
+								else {
+									func.Top = iA + result.Count;
+									for (int i = 0; i < result.Count; ++i) {
+										func.Stack[iA+i] = result[i];
+									}
 								}
 							}
 							else {
-								Top = iA + result.Count;
-								for (int i = 0; i < result.Count; ++i) {
-									Stack[iA+i] = result[i];
-								}
+								FunctionClosure fc = (FunctionClosure)c;
+								func.returnRegister = iA;
+								func.returnsSaved = iC;
+								func.pc = pc;
+								frames.Push(func);
+								
+								//Make the call:
+								pc = 0;
+								code = fc.code;
+								cSize = code.Length;
+								fc.env = func.env;
+								func = fc;
 							}
 							break;
 						}
@@ -878,21 +905,49 @@ namespace ManagedLua.Interpreter {
 							List<object> ret = new List<object>();
 							if (B > 0) {
 								for (int i = 0; i < B-1; ++i) {
-									ret.Add(Stack[iA+i]);
+									ret.Add(func.Stack[iA+i]);
 								}
 							}
 							else {
-								for (int i = 0; iA + i < Top; ++i) {
-									ret.Add(Stack[iA+i]);
+								for (int i = 0; iA + i < func.Top; ++i) {
+									ret.Add(func.Stack[iA+i]);
 								}
 							}
-							foreach (var uv in newUpValues) {
+							foreach (var uv in func.newUpValues) {
 								uv.Close();
 							}
 							
-							Stack.Clear();
-							Stack.AddRange(ret);
-							return;
+							func.Stack.Clear();
+							func.Stack.AddRange(ret);
+							
+							if (frames.Count == 0) return;
+							FunctionClosure retFunc = frames.Pop();
+							
+							//Copy results
+							if (retFunc.returnsSaved >= 1) {
+								retFunc.Top = retFunc.returnRegister + retFunc.returnsSaved - 1;
+								for (int i = 0; i < retFunc.returnsSaved-1; ++i) {
+									try {
+									retFunc.Stack[retFunc.returnRegister+i] = func.Stack[i];
+									}
+									catch (Exception ex) {
+										int a;
+									}
+								}
+							}
+							else {
+								retFunc.Top = retFunc.returnRegister + func.Stack.Count;
+								for (int i = 0; i < func.Stack.Count; ++i) {
+									retFunc.Stack[retFunc.returnRegister+i] = func.Stack[i];
+								}
+							}
+							
+							//Pop stack frame
+							pc = retFunc.pc;
+							code = retFunc.code;
+							cSize = code.Length;
+							func = retFunc;
+							break;
 						}
 
 					/*
@@ -903,10 +958,10 @@ namespace ManagedLua.Interpreter {
 					 *   R(A+3) := R(A)
 					 */
 					case OpCode.FORLOOP:
-							Stack[iA] = (double)Stack[iA] + (double)Stack[iA+2];
-							if ((double)Stack[iA] <= (double)Stack[iA+1]) {
+							func.Stack[iA] = (double)func.Stack[iA] + (double)func.Stack[iA+2];
+							if ((double)func.Stack[iA] <= (double)func.Stack[iA+1]) {
 								pc += sBx;
-								Stack[iA+3] = Stack[iA];
+								func.Stack[iA+3] = func.Stack[iA];
 							}
 							break;
 
@@ -916,7 +971,7 @@ namespace ManagedLua.Interpreter {
 					 * PC += sBx
 					 */
 					case OpCode.FORPREP:
-							Stack[iA] = (double)Stack[iA] - (double)Stack[iA+2];
+							func.Stack[iA] = (double)func.Stack[iA] - (double)func.Stack[iA+2];
 							pc += sBx;
 							break;
 							
@@ -952,16 +1007,16 @@ namespace ManagedLua.Interpreter {
 								block_start = (nextNum-1)*LFIELDS_PER_FLUSH;
 							}
 							
-							Table t = (Table)Stack[iA];
+							Table t = (Table)func.Stack[iA];
 							
 							if (B > 0) {
 								for (int i = 1; i <= B; ++i) {
-									t[(double)i] = Stack[iA+i];
+									t[(double)i] = func.Stack[iA+i];
 								}
 							}
 							else {
-								for (int i = 1; i < Top; ++i) {
-									t[(double)i] = Stack[iA+i];
+								for (int i = 1; i < func.Top; ++i) {
+									t[(double)i] = func.Stack[iA+i];
 								}
 							}
 							break;
@@ -972,7 +1027,7 @@ namespace ManagedLua.Interpreter {
 					 * close all variables >= R(A)
 					 */
 					case OpCode.CLOSE: {
-							foreach (var uv in newUpValues) {
+							foreach (var uv in func.newUpValues) {
 								uv.CloseIfIndexGreaterThanOrEquals(iA);
 							}
 							break;
@@ -984,9 +1039,9 @@ namespace ManagedLua.Interpreter {
 					 * Special, see documentation for details
 					 */
 					case OpCode.CLOSURE: {
-							Function cl_f = f.Functions[iBx];
-							FunctionClosure cl = new FunctionClosure(globals, cl_f);
-							Stack[iA] = cl;
+							Function cl_f = func.f.Functions[iBx];
+							FunctionClosure cl = new FunctionClosure(func.env, cl_f);
+							func.Stack[iA] = cl;
 							
 							//Set upvalues
 							creatingClosure = cl;
@@ -1009,8 +1064,8 @@ namespace ManagedLua.Interpreter {
 				}
 			}
 		}
-	
-
+		
+		
 		#region OPCODES
 
 		private static OpCode[] ops = (OpCode[])OpCode.GetValues(typeof(OpCode));
