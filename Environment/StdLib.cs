@@ -46,11 +46,12 @@ namespace ManagedLua.Environment {
 		}
 
 		private const string digits = "0123456789abcdefghijklmnopqrstuvwxyz";
-		private long ConvertFromBase(string from, int numberBase) {
-			long acc = 0;
+		private ulong ConvertFromBase(string from, uint numberBase) {
+			ulong acc = 0;
 			for (int i = 0; i < from.Length; ++i) {
-				int k = digits.IndexOf(from[i]);
-				acc = acc * numberBase + k;
+				int k = digits.IndexOf(char.ToLower(from[i]));
+				if (k >= numberBase || k == -1) throw new InvalidCastException("Cannot convert string to number, it contains invalid characters");
+				acc = acc * numberBase + (ulong)k;
 			}
 			return acc;
 		}
@@ -58,7 +59,7 @@ namespace ManagedLua.Environment {
 		[Lib("tonumber")]
 		public object tonumber(params object[] args) {
 			try {
-				if (args.Length >= 2 || args.Length == 0) throw new ArgumentException("Function takes 1 or 2 arguments");
+				if (args.Length > 2 || args.Length == 0) throw new ArgumentException("Function takes 1 or 2 arguments");
 				else if (args.Length == 2 && !(args[1] is double)) throw new ArgumentException("Second argument must be a number");
 				else if (args[0] is double) {
 					return (double)args[0];
@@ -67,7 +68,7 @@ namespace ManagedLua.Environment {
 					return Convert.ToDouble(args[0]);
 				}
 				else {
-					return (double)ConvertFromBase((string)args[0], (int)args[1]);
+					return (double)ConvertFromBase((string)args[0], (uint)(double)args[1]);
 				}
 			}
 			catch (InvalidCastException) {
