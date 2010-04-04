@@ -44,6 +44,9 @@
   <ItemGroup>
     <Compile Include="VirtualMachine.cs" />
     <Compile Include="VirtualMachine.Helpers.cs" />
+    <None Include="stdlib.luac">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Environment\Environment.csproj">

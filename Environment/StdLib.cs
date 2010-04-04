@@ -1,5 +1,6 @@
 ﻿
 using System;
+using System.Collections.Generic;
 using System.Text;
 using ManagedLua.Environment.Types;
 
@@ -14,6 +15,9 @@ namespace ManagedLua.Environment {
 			this.Table = Table;
 		}
 	}
+
+	[AttributeUsage(AttributeTargets.Method)]
+	public class MultiRetAttribute: Attribute {}
 
 
 	public partial class StdLib {
@@ -74,6 +78,19 @@ namespace ManagedLua.Environment {
 			catch (InvalidCastException) {
 				return Nil.Value;
 			}
+		}
+		
+		[Lib("unpack")]
+		[MultiRet]
+		public object[] unpack(Table table, params object[] l) {
+			double i = l.Length >= 1 ? (double)l[0] : 1;
+			double j = l.Length >= 1 ? (double)l[0] : table.Length;
+			
+			var ret = new List<object>();
+			while (i <= j) {
+				ret.Add(l[(int)i]);
+			}
+			return ret.ToArray();
 		}
 	}
 }

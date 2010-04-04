@@ -53,6 +53,10 @@ namespace ManagedLua.Interpreter {
 			}
 			Table io = (Table)globals["io"];
 			io["stdout"] = std.StdOut;
+			
+			using (FileStream fs = File.OpenRead("stdlib.luac")) {
+				Run(fs);
+			}
 		}
 		
 		private void RegisterFunction(MethodInfo m, object host, string tableName, string funcName) {
@@ -76,6 +80,8 @@ namespace ManagedLua.Interpreter {
 		public void Run(byte[] code) {
 			Run(new MemoryStream(code, false));
 		}
+		
+		delegate void EmptyFunc();
 
 		/// <summary>
 		/// Loads and runs a lua chunk.
@@ -99,7 +105,101 @@ namespace ManagedLua.Interpreter {
 
 				var topFunction = ReadFunction(s);
 				
-				new LuaThread(globals, topFunction).Run();
+				LuaThread thread = new LuaThread(globals, topFunction);
+				thread.Status = Thread.StatusType.Running;
+				List<object> result = new List<object>();
+				
+				ThreadResult tResult;
+				Dictionary<LuaThread, LuaThread> calledBy = new Dictionary<LuaThread, LuaThread>();
+				do {
+					EmptyFunc pushResults = delegate() {
+						if (thread.func.returnsSaved >= 1) {
+							thread.func.Top = thread.func.returnRegister + thread.func.returnsSaved - 1;
+							for (int i = 0; i < thread.func.returnsSaved-1; ++i) {
+								thread.func.Stack[thread.func.returnRegister+i] = i < result.Count ? result[i] : Nil.Value;
+							}
+						}
+						else {
+							thread.func.Top = thread.func.returnRegister + result.Count;
+							for (int i = 0; i < result.Count; ++i) {
+								thread.func.Stack[thread.func.returnRegister+i] = i < result.Count ? result[i] : Nil.Value;
+							}
+						}
+					};
+					
+					do {
+						tResult = thread.Run();
+						
+						if (tResult.Type == ThreadResult.ResultType.FunctionCall) {
+							tResult.func.Run();
+							
+							//Pop results
+							result = tResult.func.GetResults();
+							
+							if (result.Count != 0) {
+								if (result[0] is System.Enum) {
+									switch((VMCommand)result[0]) {
+										//1: The closure
+										case VMCommand.CO_CREATE:
+											FunctionClosure newFunction = (FunctionClosure)result[1];
+											LuaThread newThread = new LuaThread(thread.func.env, newFunction.f);
+											result.Clear();
+											result.Add(newThread);
+											break;
+											
+										//1: the thread to resume
+										//2+: args to the thread
+										case VMCommand.CO_RESUME:
+											calledBy.Add((LuaThread)result[1], thread);
+											thread.Status = Thread.StatusType.Normal;
+											thread = (LuaThread)result[1];
+											thread.Status = Thread.StatusType.Running;
+											if (!thread.Running) {
+												for (int i = 2; i < result.Count; ++i) {
+													thread.func.AddParam(result[i]);
+												}
+												continue;
+											}
+											//Else just pass them as return values to yield
+											result.RemoveRange(0, 2); // Remove the command and the thread
+											break;
+											
+										case VMCommand.CO_RUNNING:
+											result.Clear();
+											if (calledBy.ContainsKey(thread)) {
+												result.Add(thread);
+											}
+											else {
+												result.Add(Nil.Value);
+											}
+											break;
+											
+										//1+: return values to resume
+										case VMCommand.CO_YIELD:
+											var caller = calledBy[thread];
+											calledBy.Remove(thread);
+											thread.Status = Thread.StatusType.Suspended;
+											thread = caller;
+											thread.Status = Thread.StatusType.Running;
+											result.RemoveAt(0); // Remove command
+											break;
+									}
+								}
+							}
+							pushResults();
+						}
+					} while(tResult.Type != ThreadResult.ResultType.Dead);
+					thread.Status = Thread.StatusType.Dead;
+					
+					if (calledBy.Count == 0) break;
+					
+					result = thread.func.GetResults();
+					var prevThread = calledBy[thread];
+					calledBy.Remove(thread);
+					thread = prevThread;
+					pushResults();
+					
+				} while(true);
 			}
 			catch (System.IO.IOException ex) {
 				throw new MalformedChunkException(ex);
@@ -431,7 +531,15 @@ namespace ManagedLua.Interpreter {
 				
 				//TODO: multiple return values
 				Stack.Clear();
-				Stack.Add(ret);
+				
+				if (method.GetCustomAttributes(typeof(Environment.MultiRetAttribute), false).Length != 0) {
+					//MultiRet method
+					Stack.AddRange((object[])ret);
+				}
+				else {
+					//SingleRet method
+					Stack.Add(ret);
+				}
 			}
 		}
 		
@@ -479,9 +587,17 @@ namespace ManagedLua.Interpreter {
 				}
 			}
 		}
-	
-		class LuaThread {
-			FunctionClosure func;
+		
+		class ThreadResult {
+			public enum ResultType {
+				Dead, FunctionCall
+			}
+			public ResultType Type {get;set;}
+			public InternalClosure func {get;set;}
+		}
+		
+		class LuaThread: Thread {
+			internal FunctionClosure func;
 			Stack<FunctionClosure> frames = new Stack<FunctionClosure>();
 			
 			const int InstructionMask = 0x0000003F;
@@ -496,17 +612,21 @@ namespace ManagedLua.Interpreter {
 			int cSize;
 			int pc;
 			
+			public bool Running { get; private set; }
+			
 			public LuaThread(Table env, Function f) {
 				func = new FunctionClosure(env, f);
 				func.Prepare();
 				this.code = f.Code;
 				cSize = code.Length;
+				Running = false;
 			}
 			
 			FunctionClosure creatingClosure;
 			const double LFIELDS_PER_FLUSH = 50;
 			
-			public void Run() {
+			public ThreadResult Run() {
+				Running = true;
 				creatingClosure = null;
 				while (pc < cSize) {
 					if (pc == 0) {
@@ -853,21 +973,12 @@ namespace ManagedLua.Interpreter {
 								}
 							}
 							if (c is InternalClosure) {
-								((InternalClosure)c).Run();
-								//Pop results
-								var result = c.GetResults();
-								if (C >= 1) {
-									func.Top = iA + iC - 1;
-									for (int i = 0; i < C-1; ++i) {
-										func.Stack[iA+i] = result[i];
-									}
-								}
-								else {
-									func.Top = iA + result.Count;
-									for (int i = 0; i < result.Count; ++i) {
-										func.Stack[iA+i] = result[i];
-									}
-								}
+								func.returnRegister = iA;
+								func.returnsSaved = iC;
+								return new ThreadResult {
+									Type = ThreadResult.ResultType.FunctionCall,
+									func = (InternalClosure)c
+								};
 							}
 							else {
 								FunctionClosure fc = (FunctionClosure)c;
@@ -920,19 +1031,14 @@ namespace ManagedLua.Interpreter {
 							func.Stack.Clear();
 							func.Stack.AddRange(ret);
 							
-							if (frames.Count == 0) return;
+							if (frames.Count == 0) return new ThreadResult { Type = ThreadResult.ResultType.Dead };
 							FunctionClosure retFunc = frames.Pop();
 							
 							//Copy results
 							if (retFunc.returnsSaved >= 1) {
 								retFunc.Top = retFunc.returnRegister + retFunc.returnsSaved - 1;
 								for (int i = 0; i < retFunc.returnsSaved-1; ++i) {
-									try {
-									retFunc.Stack[retFunc.returnRegister+i] = func.Stack[i];
-									}
-									catch (Exception ex) {
-										int a;
-									}
+									retFunc.Stack[retFunc.returnRegister+i] = i < func.Stack.Count ? func.Stack[i] : Nil.Value;
 								}
 							}
 							else {
@@ -1062,6 +1168,7 @@ namespace ManagedLua.Interpreter {
 							throw new NotImplementedException(string.Format("OpCode {0} ({1}) is not supported", (int)opcode, opcode, opcode.ToString()));
 					}
 				}
+				throw new MalformedChunkException();
 			}
 		}
 		

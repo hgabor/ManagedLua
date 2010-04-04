@@ -46,6 +46,7 @@
   </ItemGroup>
   <ItemGroup>
     <Folder Include="Types" />
+    <Compile Include="StdLib.coroutine.cs" />
     <Compile Include="StdLib.cs" />
     <Compile Include="StdLib.file.cs" />
     <Compile Include="StdLib.io.cs" />
@@ -56,5 +57,7 @@
     <Compile Include="Types\Closure.cs" />
     <Compile Include="Types\Nil.cs" />
     <Compile Include="Types\Table.cs" />
+    <Compile Include="Types\Thread.cs" />
+    <Compile Include="Types\VMCommand.cs" />
   </ItemGroup>
 </Project>
