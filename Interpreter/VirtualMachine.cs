@@ -733,7 +733,10 @@ namespace ManagedLua.Interpreter {
 					 * R(A) := ... := R(B) = nil
 					 */
 					case OpCode.LOADNIL:
-							goto default;
+							for (int i = iA; i <= iB; ++i) {
+								func.Stack[i] = Nil.Value;
+							}
+							break;
 
 					/*
 					 * GETUPVAL A B
@@ -900,7 +903,12 @@ namespace ManagedLua.Interpreter {
 					 * R(A) := R(B) .. (...) .. R(C), where R(B) ... R(C) are strings
 					 */
 					case OpCode.CONCAT:
-							goto default;
+							var sb = new System.Text.StringBuilder();
+							for (int i = iB; i <= iC; ++i) {
+								sb.Append(func.Stack[i]);
+							}
+							func.Stack[iA] = sb.ToString();
+							break;
 							
 					#endregion
 							
@@ -949,10 +957,20 @@ namespace ManagedLua.Interpreter {
 
 					/*
 					 * TESTSET A B C
-					 * if (bool)R(A) == C then R(A) := R(B) else PC++
+					 * if (bool)R(B) == C then R(A) := R(B) else PC++
 					 */
-					case OpCode.TESTSET:
-							goto default;
+					case OpCode.TESTSET: {
+							bool bC = C != 0;
+							bool bB = ToBool(func.Stack[iB]);
+							if (bC == bB) {
+								func.Stack[iA] = func.Stack[iB];
+							}
+							else {
+								++pc;
+							}
+							//Next OpCode is JMP
+							break;
+						}
 						
 					/*
 					 * CALL A B C
