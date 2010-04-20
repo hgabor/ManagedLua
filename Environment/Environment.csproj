@@ -46,6 +46,7 @@
   </ItemGroup>
   <ItemGroup>
     <Folder Include="Types" />
+    <Compile Include="LuaVM.cs" />
     <Compile Include="StdLib.coroutine.cs" />
     <Compile Include="StdLib.cs" />
     <Compile Include="StdLib.file.cs" />

@@ -1,7 +1,9 @@
 ﻿
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Text;
+
 using ManagedLua.Environment.Types;
 
 namespace ManagedLua.Environment {
@@ -21,6 +23,10 @@ namespace ManagedLua.Environment {
 
 
 	public partial class StdLib {
+		LuaVM vm;
+		
+		public StdLib(LuaVM vm) { this.vm = vm; }
+		
 		[Lib("print")]
 		public void print(params object[] o) {
 			string[] s = Array.ConvertAll(o, obj => obj.ToString());
@@ -91,6 +97,60 @@ namespace ManagedLua.Environment {
 				ret.Add(l[(int)i]);
 			}
 			return ret.ToArray();
+		}
+		
+		
+		[Lib("next")]
+		[MultiRet]
+		public object[] next(Table table, params object[] p) {
+			object index = (p.Length > 0 || p[0] == Nil.Value)  ? p[0] : Nil.Value;
+			index = table.NextKey(index);
+			object o = table[index];
+			if (o == Nil.Value) {
+				return new object[] { Nil.Value };
+			}
+			else if (o == null) throw new Exception("Key does not exist in the table");
+			else {
+				return new object[] {
+					index, o
+				};
+			}
+		}
+		
+		[Lib("pairs")]
+		[MultiRet]
+		public object[] pairs(Table t) {
+			return new object[] {
+				vm.GetGlobalVar("next"),
+				t,
+				Nil.Value
+			};
+		}
+		
+		
+		[MultiRet]
+		public object[] ipairs_next(Table t, params object[] p) {
+			double index = (double)((p.Length > 0 || p[0] == Nil.Value)  ? p[0] : -1);
+			++index;
+			object o = t[index];
+			if (o == Nil.Value) {
+				return new object[] { Nil.Value };
+			}
+			else {
+				return new object[] {
+					index, o
+				};
+			}
+		}
+		
+		[Lib("ipairs")]
+		[MultiRet]
+		public object[] ipairs(Table t) {
+			return new object[] {
+				vm.WrapFunction(typeof(StdLib).GetMethod("ipairs_next"), this),
+				t,
+				0.0
+			};
 		}
 	}
 }

@@ -1,5 +1,6 @@
 ﻿
 using System;
+using System.Collections;
 using System.Collections.Specialized;
 
 namespace ManagedLua.Environment.Types {
@@ -11,10 +12,10 @@ namespace ManagedLua.Environment.Types {
 		}
 		
 		private OrderedDictionary d = new OrderedDictionary();
-		//private Dictionary<object, object> d = new Dictionary<object, object>();
 		
 		public bool IsSet(object key) {
 			return d.Contains(key);
+			
 		}
 		
 		public object this[object key] {
@@ -34,7 +35,12 @@ namespace ManagedLua.Environment.Types {
 					return Nil.Value;
 			}
 			set {
-				d[key] = value;
+				if (value == Nil.Value) {
+					d.Remove(key);
+				}
+				else {
+					d[key] = value;
+				}
 			}
 		}
 		
@@ -61,6 +67,25 @@ namespace ManagedLua.Environment.Types {
 				}
 				metatable = value;
 			}
+		}
+		
+		public object NextKey(object o) {
+			if (o == null) throw new ArgumentNullException("o");
+			int i = 0;
+			foreach(DictionaryEntry v in d) {
+				if (o == Nil.Value) return v.Key;
+				if (o.Equals(v.Key)) {
+					if (i == d.Count-1) {
+						return Nil.Value;
+					}
+					else {
+						//return the next value
+						o = Nil.Value;
+					}
+				}
+				++i;
+			}
+			return null;
 		}
 	}
 }

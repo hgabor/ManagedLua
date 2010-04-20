@@ -30,6 +30,7 @@ namespace ManagedLua.Interpreter {
 		/// </summary>
 		/// <param name="in_args">Arguments passed to the script (e.g. through the command line)</param>
 		public VirtualMachine(string[] in_args) {
+			vminterface = new VirtualMachine.VMInterface(this);
 			LoadStdLib();
 			
 			//Set args
@@ -45,7 +46,7 @@ namespace ManagedLua.Interpreter {
 		/// Loads the standard library functions into the lua environment.
 		/// </summary>
 		private void LoadStdLib() {
-			var std = new StdLib();
+			var std = new StdLib(vminterface);
 			foreach(var m in typeof(StdLib).GetMethods()) {
 				LibAttribute la = (LibAttribute)Array.Find(m.GetCustomAttributes(false), o => o is LibAttribute);
 				if (la == null) continue;
@@ -551,6 +552,7 @@ namespace ManagedLua.Interpreter {
 			internal uint[] code;
 			internal int cSize;
 			internal int pc = 0;
+			internal int cycle = 0;
 			
 			internal int returnRegister;
 			internal int returnsSaved;
@@ -611,6 +613,7 @@ namespace ManagedLua.Interpreter {
 			uint[] code;
 			int cSize;
 			int pc;
+			int cycle = 0;
 			
 			public bool Running { get; private set; }
 			
@@ -1003,6 +1006,7 @@ namespace ManagedLua.Interpreter {
 								func.returnRegister = iA;
 								func.returnsSaved = iC;
 								func.pc = pc;
+								func.cycle = 0;
 								frames.Push(func);
 								
 								//Make the call:
@@ -1068,6 +1072,7 @@ namespace ManagedLua.Interpreter {
 							
 							//Pop stack frame
 							pc = retFunc.pc;
+							cycle = retFunc.cycle;
 							code = retFunc.code;
 							cSize = code.Length;
 							func = retFunc;
@@ -1108,7 +1113,53 @@ namespace ManagedLua.Interpreter {
 					 *   PC++
 					 */
 					case OpCode.TFORLOOP:
-							goto default;
+							//This is the only opcode that uses more than one cycle to complete
+							//We could break it up to multiple opcodes, but that could potentially break branch instructions.
+							
+							if (cycle == 0) {
+								//In the first cycle, we call the function
+								--pc;
+								++cycle;
+								ClosureBase c = ((ClosureBase)func.Stack[iA]).CreateCallableInstance();
+								c.Prepare();
+								//Push params
+								c.AddParam(func.Stack[iA+1]);
+								c.AddParam(func.Stack[iA+2]);
+								if (c is InternalClosure) {
+									func.returnRegister = iA+3;
+									func.returnsSaved = iC+1;
+									return new ThreadResult {
+										Type = ThreadResult.ResultType.FunctionCall,
+										func = (InternalClosure)c
+									};
+								}
+								else {
+									FunctionClosure fc = (FunctionClosure)c;
+									func.returnRegister = iA+3;
+									func.returnsSaved = iC+1;
+									func.pc = pc;
+									func.cycle = 1;
+									frames.Push(func);
+									
+									//Make the call:
+									pc = 0;
+									code = fc.code;
+									cSize = code.Length;
+									fc.env = func.env;
+									func = fc;
+								}
+							}
+							else {
+								//In the second cycle, we execute the remaing instructions
+								cycle = 0;
+								if (func.Stack[iA+3] != Nil.Value) {
+									func.Stack[iA+2] = func.Stack[iA+3];
+								}
+								else {
+									++pc;
+								}
+							}
+							break;
 							
 					#endregion
 							
@@ -1237,5 +1288,23 @@ namespace ManagedLua.Interpreter {
 		}
 
 		#endregion
+		
+		private class VMInterface : LuaVM {
+			private VirtualMachine vm;
+			public VMInterface(VirtualMachine vm) { this.vm = vm; }
+			
+			public Closure WrapFunction(MethodInfo method, object obj) {
+				return new InternalClosure(method, obj);
+			}
+			
+			public object GetGlobalVar(object key) {
+				return vm.globals[key];
+			}
+			
+			public void SetGlobalVar(object key, object value) {
+				vm.globals[key] = value;
+			}
+		}
+		private VMInterface vminterface;
 	}
 }
