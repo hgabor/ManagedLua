@@ -94,7 +94,8 @@ namespace ManagedLua.Environment {
 			
 			var ret = new List<object>();
 			while (i <= j) {
-				ret.Add(l[(int)i]);
+				ret.Add(table[i]);
+				++i;
 			}
 			return ret.ToArray();
 		}

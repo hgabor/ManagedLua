@@ -142,8 +142,9 @@ namespace ManagedLua.Interpreter {
 									switch((VMCommand)result[0]) {
 										//1: The closure
 										case VMCommand.CO_CREATE:
-											FunctionClosure newFunction = (FunctionClosure)result[1];
-											LuaThread newThread = new LuaThread(thread.func.env, newFunction.f);
+											var newFunction = (FunctionClosure)((FunctionClosure)result[1]).CreateCallableInstance();
+											newFunction.Prepare();
+											LuaThread newThread = new LuaThread(thread.func.env, newFunction);
 											result.Clear();
 											result.Add(newThread);
 											break;
@@ -458,7 +459,7 @@ namespace ManagedLua.Interpreter {
 			/// Pushes a parameter onto the function's stack.
 			/// </summary>
 			/// <param name="o">The object</param>
-			public void AddParam(object o) {
+			public virtual void AddParam(object o) {
 				stack.Add(o);
 				Top++;
 			}
@@ -530,7 +531,6 @@ namespace ManagedLua.Interpreter {
 				object ret;
 				ret = method.Invoke(host, callParams.ToArray());
 				
-				//TODO: multiple return values
 				Stack.Clear();
 				
 				if (method.GetCustomAttributes(typeof(Environment.MultiRetAttribute), false).Length != 0) {
@@ -559,6 +559,8 @@ namespace ManagedLua.Interpreter {
 			
 			internal Table env;
 			
+			internal List<object> vararg;
+			
 			public FunctionClosure(Table env, Function f) {
 				this.env = env;
 				this.f = f;
@@ -566,10 +568,17 @@ namespace ManagedLua.Interpreter {
 				cSize = code.Length;
 			}
 			
+			public FunctionClosure(Table env, FunctionClosure f) : this(env, f.f) {
+				upValues.AddRange(f.upValues);
+			}
+			
 			public override void Prepare() {
 				base.Prepare();
 				pc = 0;
 				newUpValues = new List<UpValue>();
+				if ((f.IsVarargFlag & VARARG_ISVARARG) != 0) {
+					vararg = new List<object>();
+				}
 			}
 			
 			internal List<UpValue> upValues = new List<UpValue>();
@@ -582,10 +591,19 @@ namespace ManagedLua.Interpreter {
 				}
 			}
 			
-			internal List<UpValue> newUpValues;
+			internal List<UpValue> newUpValues = new List<UpValue>();
 			internal void AddNewUpValue(UpValue uv) {
 				if (!newUpValues.Exists(o => o.Value.Equals(uv))) {
 					newUpValues.Add(uv);
+				}
+			}
+			
+			public override void AddParam(object o) {
+				if (Top < f.Parameters) {
+					base.AddParam(o);
+				}
+				else if ((f.IsVarargFlag & VARARG_ISVARARG) != 0) {
+					vararg.Add(o);
 				}
 			}
 		}
@@ -621,6 +639,14 @@ namespace ManagedLua.Interpreter {
 				func = new FunctionClosure(env, f);
 				func.Prepare();
 				this.code = f.Code;
+				cSize = code.Length;
+				Running = false;
+			}
+			
+			public LuaThread(Table env, FunctionClosure fc) {
+				func = new FunctionClosure(env, fc);
+				func.Prepare();
+				this.code = fc.f.Code;
 				cSize = code.Length;
 				Running = false;
 			}
@@ -1228,8 +1254,23 @@ namespace ManagedLua.Interpreter {
 					 * VARARG A B
 					 * R(A), ..., R(A+B-1) = vararg
 					 */
-					case OpCode.VARARG:
-						goto default;
+					case OpCode.VARARG: {
+							if (B == 0) {
+								func.Top = iA + func.vararg.Count;
+								//Grow stack till Top
+								
+								while (func.Stack.Count < func.Top) func.Stack.Add(Nil.Value);
+								for (int i = 0; i < func.vararg.Count && iA + i < func.Top; ++i) {
+									func.Stack[iA+i] = func.vararg[i];
+								}
+							}
+							else {
+								for (int i = 0; i < iB; ++i) {
+									func.Stack[iA + i] = (i < func.vararg.Count) ? func.vararg[i] : Nil.Value;
+								}
+							}
+							break;
+					}
 					
 					#endregion
 							
