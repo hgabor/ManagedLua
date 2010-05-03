@@ -11,6 +11,16 @@ namespace ManagedLua.Environment {
 			return Math.Abs(d);
 		}
 		
+		[Lib("math", "fmod")]
+		public double math_fmod(double x, double y) {
+			return x % y;
+		}
+		
+		[Lib("math", "mod")]
+		public double math_mod(double x, double y) {
+			return math_fmod(x, y);
+		}
+		
 		[Lib("math", "random")]
 		public double math_random(params object[] d) {
 			if (d.Length >= 3) throw new ArgumentException("To many arguments!");

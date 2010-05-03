@@ -117,13 +117,13 @@ namespace ManagedLua.Interpreter {
 						if (thread.func.returnsSaved >= 1) {
 							thread.func.Top = thread.func.returnRegister + thread.func.returnsSaved - 1;
 							for (int i = 0; i < thread.func.returnsSaved-1; ++i) {
-								thread.func.Stack[thread.func.returnRegister+i] = i < result.Count ? result[i] : Nil.Value;
+								thread.func.stack[thread.func.returnRegister+i] = i < result.Count ? result[i] : Nil.Value;
 							}
 						}
 						else {
 							thread.func.Top = thread.func.returnRegister + result.Count;
 							for (int i = 0; i < result.Count; ++i) {
-								thread.func.Stack[thread.func.returnRegister+i] = i < result.Count ? result[i] : Nil.Value;
+								thread.func.stack[thread.func.returnRegister+i] = i < result.Count ? result[i] : Nil.Value;
 							}
 						}
 					};
@@ -350,7 +350,7 @@ namespace ManagedLua.Interpreter {
 			s.Read(buffer, 0, size);
 
 			char[] str = Array.ConvertAll(buffer, b => (char)b);
-			return new string(str, 0, size - 1);
+			return string.Intern(new string(str, 0, size - 1));
 		}
 
 		private byte[] numBuffer = new byte[8];
@@ -437,13 +437,7 @@ namespace ManagedLua.Interpreter {
 		/// </summary>
 		abstract class ClosureBase: Closure {
 			//TODO: IsPrototype check
-			private List<object> stack;
-			
-			protected internal List<object> Stack {
-				get {
-					return stack;
-				}
-			}
+			protected internal List<object> stack;
 			protected internal int Top { get; set; }
 			
 			/// <summary>
@@ -507,8 +501,8 @@ namespace ManagedLua.Interpreter {
 				int i;
 				for (i = 0; i < methodParams.Length-1; ++i) {
 					Type t = methodParams[i].ParameterType;
-					if (!t.IsInstanceOfType(Stack[i])) throw new ArgumentException();
-					callParams.Add(Stack[i]);
+					if (!t.IsInstanceOfType(stack[i])) throw new ArgumentException();
+					callParams.Add(stack[i]);
 				}
 				if (i < methodParams.Length) {
 					Type t = methodParams[i].ParameterType;
@@ -516,30 +510,30 @@ namespace ManagedLua.Interpreter {
 						//This is a vararg function
 						Type et = t.GetElementType();
 						var paramArray = new List<object>();
-						for(; i < Stack.Count; ++i) {
-							if (!et.IsInstanceOfType(Stack[i])) throw new ArgumentException();
-							paramArray.Add(Stack[i]);
+						for(; i < stack.Count; ++i) {
+							if (!et.IsInstanceOfType(stack[i])) throw new ArgumentException();
+							paramArray.Add(stack[i]);
 						}
 						callParams.Add(paramArray.ToArray());
 					}
 					else {
-						if (!t.IsInstanceOfType(Stack[i])) throw new ArgumentException();
-						callParams.Add(Stack[i]);
+						if (!t.IsInstanceOfType(stack[i])) throw new ArgumentException();
+						callParams.Add(stack[i]);
 					}
 				}
 				
 				object ret;
 				ret = method.Invoke(host, callParams.ToArray());
 				
-				Stack.Clear();
+				stack.Clear();
 				
 				if (method.GetCustomAttributes(typeof(Environment.MultiRetAttribute), false).Length != 0) {
 					//MultiRet method
-					Stack.AddRange((object[])ret);
+					stack.AddRange((object[])ret);
 				}
 				else {
 					//SingleRet method
-					Stack.Add(ret);
+					stack.Add(ret);
 				}
 			}
 		}
@@ -659,8 +653,8 @@ namespace ManagedLua.Interpreter {
 				creatingClosure = null;
 				while (pc < cSize) {
 					if (pc == 0) {
-						while (func.Stack.Count < func.f.MaxStackSize) {
-							func.Stack.Add(Nil.Value);
+						while (func.stack.Count < func.f.MaxStackSize) {
+							func.stack.Add(Nil.Value);
 						}
 					}
 					
@@ -691,7 +685,7 @@ namespace ManagedLua.Interpreter {
 					if (creatingClosure != null) {
 						if (creatingClosure.NeedsMoreUpValues) {
 							if (opcode == OpCode.MOVE) {
-								UpValue uv = new UpValue(this.func.Stack, iB);
+								UpValue uv = new UpValue(this.func.stack, iB);
 								creatingClosure.AddUpValue(uv);
 								this.func.AddNewUpValue(uv);
 							}
@@ -734,7 +728,7 @@ namespace ManagedLua.Interpreter {
 					 * Secondary use (closures) is implemented at OpCode.CLOSURE
 					 */
 					case OpCode.MOVE: {
-							func.Stack[iA] = func.Stack[iB];
+							func.stack[iA] = func.stack[iB];
 							break;
 						}
 							
@@ -743,7 +737,7 @@ namespace ManagedLua.Interpreter {
 					 * R(A) := K(Bx)
 					 */
 					case OpCode.LOADK:
-							func.Stack[iA] = func.f.Constants[Bx];
+							func.stack[iA] = func.f.Constants[Bx];
 							break;
 					
 					/*
@@ -751,7 +745,7 @@ namespace ManagedLua.Interpreter {
 					 * R(A) := (bool)B;   if (C != 0) PC++
 					 */
 					case OpCode.LOADBOOL:
-							func.Stack[iA] = B != 0;
+							func.stack[iA] = B != 0;
 							if (C != 0) {
 								++pc;
 							}
@@ -763,7 +757,7 @@ namespace ManagedLua.Interpreter {
 					 */
 					case OpCode.LOADNIL:
 							for (int i = iA; i <= iB; ++i) {
-								func.Stack[i] = Nil.Value;
+								func.stack[i] = Nil.Value;
 							}
 							break;
 
@@ -772,7 +766,7 @@ namespace ManagedLua.Interpreter {
 					 * R(A) := Up(B)
 					 */
 					case OpCode.GETUPVAL:
-							func.Stack[iA] = func.upValues[iB].Value;
+							func.stack[iA] = func.upValues[iB].Value;
 							break;
 
 					/*
@@ -781,7 +775,7 @@ namespace ManagedLua.Interpreter {
 					 */
 					case OpCode.GETGLOBAL: {
 							object c = func.f.Constants[Bx];
-							func.Stack[iA] = func.env[c];
+							func.stack[iA] = func.env[c];
 							break;
 						}
 					
@@ -790,16 +784,16 @@ namespace ManagedLua.Interpreter {
 					 * R(A) := R(B)[RK(C)]
 					 */
 					case OpCode.GETTABLE: {
-							Table t = (Table)func.Stack[iB];
+							Table t = (Table)func.stack[iB];
 							object index;
 							if (C_const) {
 								index = func.f.Constants[iC_RK];
 							}
 							else {
-								index = func.Stack[iC_RK];
+								index = func.stack[iC_RK];
 							}
 							
-							func.Stack[iA] = t[index];
+							func.stack[iA] = t[index];
 							break;
 						}
 					
@@ -809,7 +803,7 @@ namespace ManagedLua.Interpreter {
 					 */
 					case OpCode.SETGLOBAL: {
 							object c = func.f.Constants[Bx];
-							func.env[c] = func.Stack[iA];
+							func.env[c] = func.stack[iA];
 							break;
 						}
 							
@@ -818,7 +812,7 @@ namespace ManagedLua.Interpreter {
 					 * Up(B) := R(A)
 					 */
 					case OpCode.SETUPVAL:
-							func.upValues[iB].Value = func.Stack[iA];
+							func.upValues[iB].Value = func.stack[iA];
 							break;
 							
 					/*
@@ -826,15 +820,15 @@ namespace ManagedLua.Interpreter {
 					 * R(A)[RK(B)] := RK(C)
 					 */
 					case OpCode.SETTABLE: {
-							Table t = (Table)func.Stack[iA];
+							Table t = (Table)func.stack[iA];
 							object index;
 							if (B_const) {
 								index = func.f.Constants[iB_RK];
 							}
 							else {
-								index = func.Stack[iB_RK];
+								index = func.stack[iB_RK];
 							}
-							t[index] = C_const ? func.f.Constants[iC_RK] : func.Stack[iC_RK];
+							t[index] = C_const ? func.f.Constants[iC_RK] : func.stack[iC_RK];
 							break;
 						}
 							
@@ -849,7 +843,7 @@ namespace ManagedLua.Interpreter {
 					case OpCode.NEWTABLE: {
 							//Size parameters are ignored, it is only an optimization
 							Table t = new Table();
-							func.Stack[iA] = t;
+							func.stack[iA] = t;
 							break;
 					}
 					
@@ -859,10 +853,10 @@ namespace ManagedLua.Interpreter {
 					 * R(A) := R(B)[RK(C)]
 					 */
 					case OpCode.SELF: {
-						Table t = (Table)func.Stack[iB];
-						var tKey = C_const ? func.f.Constants[iC_RK] : func.Stack[iC_RK];
-						func.Stack[iA] = t[tKey];
-						func.Stack[iA+1] = t;
+						Table t = (Table)func.stack[iB];
+						var tKey = C_const ? func.f.Constants[iC_RK] : func.stack[iC_RK];
+						func.stack[iA] = t[tKey];
+						func.stack[iA+1] = t;
 						break;
 					}
 							
@@ -883,8 +877,8 @@ namespace ManagedLua.Interpreter {
 					case OpCode.DIV:
 					case OpCode.MOD:
 					case OpCode.POW: {
-							double op1 = (double)(B_const ? func.f.Constants[iB_RK] : func.Stack[iB_RK]);
-							double op2 = (double)(C_const ? func.f.Constants[iC_RK] : func.Stack[iC_RK]);
+							double op1 = (double)(B_const ? func.f.Constants[iB_RK] : func.stack[iB_RK]);
+							double op2 = (double)(C_const ? func.f.Constants[iC_RK] : func.stack[iC_RK]);
 							double result;
 							switch(opcode) {
 								case OpCode.ADD:
@@ -908,7 +902,7 @@ namespace ManagedLua.Interpreter {
 								default:
 									throw new Exception("Opcode mismatch");
 							}
-							func.Stack[iA] = result;
+							func.stack[iA] = result;
 							break;
 						}
 							
@@ -934,9 +928,9 @@ namespace ManagedLua.Interpreter {
 					case OpCode.CONCAT:
 							var sb = new System.Text.StringBuilder();
 							for (int i = iB; i <= iC; ++i) {
-								sb.Append(func.Stack[i]);
+								sb.Append(func.stack[i]);
 							}
-							func.Stack[iA] = sb.ToString();
+							func.stack[iA] = string.Intern(sb.ToString());
 							break;
 							
 					#endregion
@@ -961,8 +955,8 @@ namespace ManagedLua.Interpreter {
 					case OpCode.EQ:
 					case OpCode.LT:
 					case OpCode.LE: {
-						object op1 = (B_const ? func.f.Constants[iB_RK] : func.Stack[iB_RK]);
-						object op2 = (C_const ? func.f.Constants[iC_RK] : func.Stack[iC_RK]);
+						object op1 = (B_const ? func.f.Constants[iB_RK] : func.stack[iB_RK]);
+						object op2 = (C_const ? func.f.Constants[iC_RK] : func.stack[iC_RK]);
 						bool opA = A != 0;
 						if (opcode == OpCode.LT && (LessThan(op1, op2) != opA)) ++pc;
 						if (opcode == OpCode.LE && (LessThanEquals(op1, op2) != opA)) ++pc;
@@ -976,7 +970,7 @@ namespace ManagedLua.Interpreter {
 					 */
 					case OpCode.TEST: {
 							bool bC = C != 0;
-							bool bA = ToBool(func.Stack[iA]);
+							bool bA = ToBool(func.stack[iA]);
 							if (bC != bA) {
 								++pc;
 							}
@@ -990,9 +984,9 @@ namespace ManagedLua.Interpreter {
 					 */
 					case OpCode.TESTSET: {
 							bool bC = C != 0;
-							bool bB = ToBool(func.Stack[iB]);
+							bool bB = ToBool(func.stack[iB]);
 							if (bC == bB) {
-								func.Stack[iA] = func.Stack[iB];
+								func.stack[iA] = func.stack[iB];
 							}
 							else {
 								++pc;
@@ -1006,17 +1000,17 @@ namespace ManagedLua.Interpreter {
 					 * R(A), ..., R(A+C-2) := R(A)(R(A+1), ..., R(A+B-1))
 					 */
 					case OpCode.CALL: {
-							ClosureBase c = ((ClosureBase)func.Stack[iA]).CreateCallableInstance();
+							ClosureBase c = ((ClosureBase)func.stack[iA]).CreateCallableInstance();
 							c.Prepare();
 							//Push params
 							if (B >= 1) {
 								for (int i = 0; i < B-1; ++i) {
-									c.AddParam(func.Stack[iA+i+1]);
+									c.AddParam(func.stack[iA+i+1]);
 								}
 							}
 							else {
 								for (int i = 0; iA+i+1 < func.Top; ++i) {
-									c.AddParam(func.Stack[iA+i+1]);
+									c.AddParam(func.stack[iA+i+1]);
 								}
 							}
 							if (c is InternalClosure) {
@@ -1064,20 +1058,20 @@ namespace ManagedLua.Interpreter {
 							List<object> ret = new List<object>();
 							if (B > 0) {
 								for (int i = 0; i < B-1; ++i) {
-									ret.Add(func.Stack[iA+i]);
+									ret.Add(func.stack[iA+i]);
 								}
 							}
 							else {
 								for (int i = 0; iA + i < func.Top; ++i) {
-									ret.Add(func.Stack[iA+i]);
+									ret.Add(func.stack[iA+i]);
 								}
 							}
 							foreach (var uv in func.newUpValues) {
 								uv.Close();
 							}
 							
-							func.Stack.Clear();
-							func.Stack.AddRange(ret);
+							func.stack.Clear();
+							func.stack.AddRange(ret);
 							
 							if (frames.Count == 0) return new ThreadResult { Type = ThreadResult.ResultType.Dead };
 							FunctionClosure retFunc = frames.Pop();
@@ -1086,13 +1080,13 @@ namespace ManagedLua.Interpreter {
 							if (retFunc.returnsSaved >= 1) {
 								retFunc.Top = retFunc.returnRegister + retFunc.returnsSaved - 1;
 								for (int i = 0; i < retFunc.returnsSaved-1; ++i) {
-									retFunc.Stack[retFunc.returnRegister+i] = i < func.Stack.Count ? func.Stack[i] : Nil.Value;
+									retFunc.stack[retFunc.returnRegister+i] = i < func.stack.Count ? func.stack[i] : Nil.Value;
 								}
 							}
 							else {
-								retFunc.Top = retFunc.returnRegister + func.Stack.Count;
-								for (int i = 0; i < func.Stack.Count; ++i) {
-									retFunc.Stack[retFunc.returnRegister+i] = func.Stack[i];
+								retFunc.Top = retFunc.returnRegister + func.stack.Count;
+								for (int i = 0; i < func.stack.Count; ++i) {
+									retFunc.stack[retFunc.returnRegister+i] = func.stack[i];
 								}
 							}
 							
@@ -1113,10 +1107,10 @@ namespace ManagedLua.Interpreter {
 					 *   R(A+3) := R(A)
 					 */
 					case OpCode.FORLOOP:
-							func.Stack[iA] = (double)func.Stack[iA] + (double)func.Stack[iA+2];
-							if ((double)func.Stack[iA] <= (double)func.Stack[iA+1]) {
+							func.stack[iA] = (double)func.stack[iA] + (double)func.stack[iA+2];
+							if ((double)func.stack[iA] <= (double)func.stack[iA+1]) {
 								pc += sBx;
-								func.Stack[iA+3] = func.Stack[iA];
+								func.stack[iA+3] = func.stack[iA];
 							}
 							break;
 
@@ -1126,7 +1120,7 @@ namespace ManagedLua.Interpreter {
 					 * PC += sBx
 					 */
 					case OpCode.FORPREP:
-							func.Stack[iA] = (double)func.Stack[iA] - (double)func.Stack[iA+2];
+							func.stack[iA] = (double)func.stack[iA] - (double)func.stack[iA+2];
 							pc += sBx;
 							break;
 							
@@ -1146,11 +1140,11 @@ namespace ManagedLua.Interpreter {
 								//In the first cycle, we call the function
 								--pc;
 								++cycle;
-								ClosureBase c = ((ClosureBase)func.Stack[iA]).CreateCallableInstance();
+								ClosureBase c = ((ClosureBase)func.stack[iA]).CreateCallableInstance();
 								c.Prepare();
 								//Push params
-								c.AddParam(func.Stack[iA+1]);
-								c.AddParam(func.Stack[iA+2]);
+								c.AddParam(func.stack[iA+1]);
+								c.AddParam(func.stack[iA+2]);
 								if (c is InternalClosure) {
 									func.returnRegister = iA+3;
 									func.returnsSaved = iC+1;
@@ -1178,8 +1172,8 @@ namespace ManagedLua.Interpreter {
 							else {
 								//In the second cycle, we execute the remaing instructions
 								cycle = 0;
-								if (func.Stack[iA+3] != Nil.Value) {
-									func.Stack[iA+2] = func.Stack[iA+3];
+								if (func.stack[iA+3] != Nil.Value) {
+									func.stack[iA+2] = func.stack[iA+3];
 								}
 								else {
 									++pc;
@@ -1208,16 +1202,16 @@ namespace ManagedLua.Interpreter {
 								block_start = (nextNum-1)*LFIELDS_PER_FLUSH;
 							}
 							
-							Table t = (Table)func.Stack[iA];
+							Table t = (Table)func.stack[iA];
 							
 							if (B > 0) {
 								for (int i = 1; i <= B; ++i) {
-									t[(double)i] = func.Stack[iA+i];
+									t[(double)i] = func.stack[iA+i];
 								}
 							}
 							else {
 								for (int i = 1; i < func.Top; ++i) {
-									t[(double)i] = func.Stack[iA+i];
+									t[(double)i] = func.stack[iA+i];
 								}
 							}
 							break;
@@ -1242,7 +1236,7 @@ namespace ManagedLua.Interpreter {
 					case OpCode.CLOSURE: {
 							Function cl_f = func.f.Functions[iBx];
 							FunctionClosure cl = new FunctionClosure(func.env, cl_f);
-							func.Stack[iA] = cl;
+							func.stack[iA] = cl;
 							
 							//Set upvalues
 							creatingClosure = cl;
@@ -1259,14 +1253,14 @@ namespace ManagedLua.Interpreter {
 								func.Top = iA + func.vararg.Count;
 								//Grow stack till Top
 								
-								while (func.Stack.Count < func.Top) func.Stack.Add(Nil.Value);
+								while (func.stack.Count < func.Top) func.stack.Add(Nil.Value);
 								for (int i = 0; i < func.vararg.Count && iA + i < func.Top; ++i) {
-									func.Stack[iA+i] = func.vararg[i];
+									func.stack[iA+i] = func.vararg[i];
 								}
 							}
 							else {
 								for (int i = 0; i < iB; ++i) {
-									func.Stack[iA + i] = (i < func.vararg.Count) ? func.vararg[i] : Nil.Value;
+									func.stack[iA + i] = (i < func.vararg.Count) ? func.vararg[i] : Nil.Value;
 								}
 							}
 							break;

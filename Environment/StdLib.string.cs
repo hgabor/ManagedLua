@@ -6,7 +6,7 @@ namespace ManagedLua.Environment {
 		
 		[Lib("string", "format")]
 		public string string_format(string format, params object[] args) {
-			return printf.Printf.sprintf(format, args);
+			return string.Intern(printf.Printf.sprintf(format, args));
 		}
 	}
 }
