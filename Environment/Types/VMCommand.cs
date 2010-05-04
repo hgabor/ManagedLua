@@ -6,7 +6,7 @@ namespace ManagedLua.Environment.Types {
 	/// Description of VMCommand.
 	/// </summary>
 	public enum VMCommand {
-		CO_CREATE, CO_RESUME, CO_YIELD, CO_RUNNING
+		CO_CREATE, CO_RESUME, CO_YIELD, CO_RUNNING, PCALL, ERROR
 	}
 
 }

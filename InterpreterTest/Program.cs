@@ -28,7 +28,13 @@ namespace ManagedLua.InterpreterTest {
 			string s = luacFiles[2];
 			{
 				Console.WriteLine("Test {0}", s);
-				vm.Run(System.IO.File.ReadAllBytes("../tests/"+s));
+				
+				try {
+					vm.Run(System.IO.File.ReadAllBytes(s), Path.GetFileName(s));
+				}
+				catch(Interpreter.LuaScriptException ex) {
+					Console.WriteLine("InterpreterTest: " + ex.Message);
+				}
 				Console.WriteLine("End of test {0}", s);
 				Console.WriteLine();
 			}

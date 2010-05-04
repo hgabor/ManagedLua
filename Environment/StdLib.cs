@@ -21,16 +21,38 @@ namespace ManagedLua.Environment {
 	[AttributeUsage(AttributeTargets.Method)]
 	public class MultiRetAttribute: Attribute {}
 
+	[AttributeUsage(AttributeTargets.Parameter)]
+	public class OptionalAttribute: Attribute {
+		public object DefaultValue { get; private set; }
+		public OptionalAttribute() : this(Nil.Value) {}
+		public OptionalAttribute(object defaultValue) {
+			this.DefaultValue = defaultValue;
+		}
+	}
 
 	public partial class StdLib {
 		LuaVM vm;
-		
+
 		public StdLib(LuaVM vm) { this.vm = vm; }
-		
+
 		[Lib("print")]
 		public void print(params object[] o) {
 			string[] s = Array.ConvertAll(o, obj => obj.ToString());
 			Console.WriteLine(string.Join("\t", s));
+		}
+
+		//TODO: Level attribute
+		[Lib("error")]
+		[MultiRet]
+		public object[] error(string msg, [Optional(1d)] double level) {
+			return new object[] { VMCommand.ERROR, msg };
+		}
+		
+		[Lib("assert")]
+		[MultiRet]
+		public object[] assert(bool v, [Optional("assertion failed!")] string msg) {
+			if (v) return new object[] { v, msg };
+			else return new object[] { VMCommand.ERROR, msg };
 		}
 
 		//TODO: Metatable for UserData
@@ -85,13 +107,13 @@ namespace ManagedLua.Environment {
 				return Nil.Value;
 			}
 		}
-		
+
 		[Lib("unpack")]
 		[MultiRet]
 		public object[] unpack(Table table, params object[] l) {
 			double i = l.Length >= 1 ? (double)l[0] : 1;
 			double j = l.Length >= 1 ? (double)l[0] : table.Length;
-			
+
 			var ret = new List<object>();
 			while (i <= j) {
 				ret.Add(table[i]);
@@ -99,8 +121,8 @@ namespace ManagedLua.Environment {
 			}
 			return ret.ToArray();
 		}
-		
-		
+
+
 		[Lib("next")]
 		[MultiRet]
 		public object[] next(Table table, params object[] p) {
@@ -117,7 +139,7 @@ namespace ManagedLua.Environment {
 				};
 			}
 		}
-		
+
 		[Lib("pairs")]
 		[MultiRet]
 		public object[] pairs(Table t) {
@@ -127,8 +149,8 @@ namespace ManagedLua.Environment {
 				Nil.Value
 			};
 		}
-		
-		
+
+
 		[MultiRet]
 		public object[] ipairs_next(Table t, params object[] p) {
 			double index = (double)((p.Length > 0 || p[0] == Nil.Value)  ? p[0] : -1);
@@ -143,7 +165,7 @@ namespace ManagedLua.Environment {
 				};
 			}
 		}
-		
+
 		[Lib("ipairs")]
 		[MultiRet]
 		public object[] ipairs(Table t) {

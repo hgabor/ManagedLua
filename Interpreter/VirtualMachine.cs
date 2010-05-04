@@ -16,6 +16,10 @@ namespace ManagedLua.Interpreter {
 		public MalformedChunkException(): base("The byte stream is not a valid lua chunk!") {}
 		public MalformedChunkException(Exception innerException): base("The byte stream is not a valid lua chunk!", innerException) {}
 	}
+	
+	public class LuaScriptException: Exception {
+		public LuaScriptException(string msg, string[] luaStack) : base(msg + "\nstack traceback:\n" + string.Join("\n", luaStack)) {}
+	}
 
 	/// <summary>
 	/// Virtual machine for lua bytecode.
@@ -42,6 +46,14 @@ namespace ManagedLua.Interpreter {
 			globals["_VERSION"] = "Lua 5.1";
 		}
 		
+		#region Internal helper functions
+		
+		private VMCommand _setuperrorhandler() {
+			return VMCommand.PCALL;
+		}
+		
+		#endregion
+		
 		/// <summary>
 		/// Loads the standard library functions into the lua environment.
 		/// </summary>
@@ -54,6 +66,8 @@ namespace ManagedLua.Interpreter {
 			}
 			Table io = (Table)globals["io"];
 			io["stdout"] = std.StdOut;
+			
+			RegisterFunction(typeof(VirtualMachine).GetMethod("_setuperrorhandler", BindingFlags.NonPublic | BindingFlags.Instance), this, null, "__internal_setuperrorhandler");
 			
 			using (FileStream fs = File.OpenRead("stdlib.luac")) {
 				Run(fs);
@@ -79,10 +93,18 @@ namespace ManagedLua.Interpreter {
 		/// <param name="code">The lua chunk</param>
 		/// <exception cref="MalformedChunkException">The byte array is not a valid chunk</exception>
 		public void Run(byte[] code) {
-			Run(new MemoryStream(code, false));
+			Run(new MemoryStream(code, false), "<unknown>");
 		}
 		
-		delegate void EmptyFunc();
+		/// <summary>
+		/// Loads and runs a lua chunk.
+		/// </summary>
+		/// <param name="code">The lua chunk</param>
+		/// <param name="filename">The original file name of the chunk</param>
+		/// <exception cref="MalformedChunkException">The byte array is not a valid chunk</exception>
+		public void Run(byte[] code, string filename) {
+			Run(new MemoryStream(code, false), filename);
+		}
 
 		/// <summary>
 		/// Loads and runs a lua chunk.
@@ -90,6 +112,18 @@ namespace ManagedLua.Interpreter {
 		/// <param name="s">The stream containing the chunk</param>
 		/// <exception cref="MalformedChunkException">The stream's output is not a valid chunk</exception>
 		public void Run(Stream s) {
+			Run(s, "<unknown>");
+		}
+
+		delegate void EmptyFunc();
+
+		/// <summary>
+		/// Loads and runs a lua chunk.
+		/// </summary>
+		/// <param name="s">The stream containing the chunk</param>
+		/// <param name="filename">The original file name of the chunk</param>
+		/// <exception cref="MalformedChunkException">The stream's output is not a valid chunk</exception>
+		public void Run(Stream s, string filename) {
 			try {
 				Headers h = ReadHeaders(s);
 				if (Array.IndexOf(SUPPORTED_VERSIONS, h.Version) == -1 ||
@@ -104,7 +138,7 @@ namespace ManagedLua.Interpreter {
 					throw new NotSupportedException("The lua chunk format is not supported!");
 				}
 
-				var topFunction = ReadFunction(s);
+				var topFunction = ReadFunction(s, filename);
 				
 				LuaThread thread = new LuaThread(globals, topFunction);
 				thread.Status = Thread.StatusType.Running;
@@ -185,6 +219,38 @@ namespace ManagedLua.Interpreter {
 											thread.Status = Thread.StatusType.Running;
 											result.RemoveAt(0); // Remove command
 											break;
+											
+										case VMCommand.PCALL:
+											thread.func.errorHandler = true;
+											break;
+											
+										//1: error msg
+										case VMCommand.ERROR:
+											//Pop all stacks until an error handler is found
+											var stackTrace = new List<string>();
+											string errorMsg = string.Intern(thread.ErrorString + ": " + (string)result[1]);
+											result[1] = errorMsg;
+											FunctionClosure fc;
+											do {
+												fc = thread.PopFrame();
+												if (fc == null) {
+													//Thread finished without handling the error, start unwinding the calling thread
+													if (calledBy.Count == 0) {
+														//Last thread finished without handling the error, bailing out
+														throw new LuaScriptException(errorMsg, stackTrace.ToArray());
+													}
+													
+													var callerThread = calledBy[thread];
+													calledBy.Remove(thread);
+													thread = callerThread;
+													stackTrace.Add("\tlua thread");
+													continue;
+												}
+												else if (fc.errorHandler == true) break;
+												stackTrace.Add("\tlua function");
+											} while (true);
+											result[0] = false;
+											break;
 									}
 								}
 							}
@@ -236,6 +302,7 @@ namespace ManagedLua.Interpreter {
 			public uint[] Code;
 			public object[] Constants;
 			public Function[] Functions;
+			public string FileName;
 		}
 
 		const byte VARARG_HASARG = 1;
@@ -276,7 +343,7 @@ namespace ManagedLua.Interpreter {
 			};
 		}
 
-		private Function ReadFunction(Stream s) {
+		private Function ReadFunction(Stream s, string fileName) {
 			string srcName = ReadString(s);
 			int lineDefined = ReadInt(s);
 			int lastLineDefined = ReadInt(s);
@@ -287,7 +354,8 @@ namespace ManagedLua.Interpreter {
 				MaxStackSize = (byte)s.ReadByte(),
 				Code = ReadCode(s),
 				Constants = ReadConstants(s),
-				Functions = ReadFunctions(s),
+				Functions = ReadFunctions(s, fileName),
+				FileName = fileName,
 			};
 			
 			//Source line positions
@@ -320,11 +388,11 @@ namespace ManagedLua.Interpreter {
 			}
 		}
 		
-		private Function[] ReadFunctions(Stream s) {
+		private Function[] ReadFunctions(Stream s, string fileName) {
 			int size = ReadInt(s);
 			Function[] f = new Function[size];
 			for (int i = 0; i < size; ++i) {
-				f[i] = ReadFunction(s);
+				f[i] = ReadFunction(s, fileName);
 			}
 			return f;
 		}
@@ -517,8 +585,22 @@ namespace ManagedLua.Interpreter {
 						callParams.Add(paramArray.ToArray());
 					}
 					else {
-						if (!t.IsInstanceOfType(stack[i])) throw new ArgumentException();
-						callParams.Add(stack[i]);
+						object param;
+						if (i >= stack.Count) {
+							var attrs = methodParams[i].GetCustomAttributes(typeof(Environment.OptionalAttribute), false);
+							if (attrs.Length > 0) {
+								//This param is optional
+								param = ((Environment.OptionalAttribute)attrs[0]).DefaultValue;
+							}
+							else {
+								param = Nil.Value;
+							}
+						}
+						else {
+							param = stack[i];
+						}
+						if (!t.IsInstanceOfType(param)) throw new ArgumentException();
+						callParams.Add(param);
 					}
 				}
 				
@@ -550,6 +632,8 @@ namespace ManagedLua.Interpreter {
 			
 			internal int returnRegister;
 			internal int returnsSaved;
+			
+			internal bool errorHandler = false;
 			
 			internal Table env;
 			
@@ -613,6 +697,27 @@ namespace ManagedLua.Interpreter {
 		class LuaThread: Thread {
 			internal FunctionClosure func;
 			Stack<FunctionClosure> frames = new Stack<FunctionClosure>();
+			
+			public FunctionClosure PopFrame() {
+				if (frames.Count == 0) return null;
+				var oldFunc = func;
+				func = frames.Pop();
+				code = func.code;
+				pc = func.pc;
+				cycle = func.cycle;
+				code = func.code;
+				cSize = code.Length;
+				return oldFunc;
+			}
+			
+			public string ErrorString {
+				get {
+					return string.Intern(
+						string.Format("{0}:{1}",
+						              func.f.FileName,
+						              "-1"));
+				}
+			}
 			
 			const int InstructionMask = 0x0000003F;
 			const uint AMask = 0x00003FC0;
