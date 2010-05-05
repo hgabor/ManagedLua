@@ -24,7 +24,7 @@ namespace ManagedLua.Interpreter {
 	/// <summary>
 	/// Virtual machine for lua bytecode.
 	/// </summary>
-	public partial class VirtualMachine {
+	public partial class VirtualMachine: IDisposable {
 		
 		Table globals = new ManagedLua.Environment.Types.Table();
 		List<object> stack = new List<object>();
@@ -64,6 +64,11 @@ namespace ManagedLua.Interpreter {
 				if (la == null) continue;
 				RegisterFunction(m, std, la.Table, la.PublicName);
 			}
+			foreach(var f in typeof(StdLib).GetFields()) {
+				LibAttribute la = (LibAttribute)Array.Find(f.GetCustomAttributes(false), o => o is LibAttribute);
+				if (la == null) continue;
+				RegisterGlobal(f, std, la.Table, la.PublicName);
+			}
 			Table io = (Table)globals["io"];
 			io["stdout"] = std.StdOut;
 			
@@ -84,6 +89,19 @@ namespace ManagedLua.Interpreter {
 				}
 				Table t = (Table)globals[tableName];
 				t[funcName] = new InternalClosure(m, host);
+			}
+		}
+		
+		private void RegisterGlobal(FieldInfo f, object host, string tableName, string fieldName) {
+			if (string.IsNullOrEmpty(tableName)) {
+				globals[fieldName] = f.GetValue(host);
+			}
+			else {
+				if (!globals.IsSet(tableName)) {
+					globals[tableName] = new Table();
+				}
+				Table t = (Table)globals[tableName];
+				t[fieldName] = f.GetValue(host);
 			}
 		}
 
@@ -124,154 +142,162 @@ namespace ManagedLua.Interpreter {
 		/// <param name="filename">The original file name of the chunk</param>
 		/// <exception cref="MalformedChunkException">The stream's output is not a valid chunk</exception>
 		public void Run(Stream s, string filename) {
-			try {
-				Headers h = ReadHeaders(s);
-				if (Array.IndexOf(SUPPORTED_VERSIONS, h.Version) == -1 ||
-				        h.Format != 0 ||
-				        h.Endian == 0 && BitConverter.IsLittleEndian ||
-				        h.Endian == 1 && !BitConverter.IsLittleEndian ||
-				        h.IntSize != 4 ||
-				        h.Size_tSize != 4 ||
-				        h.InstructionSize != 4 ||
-				        h.NumberSize != 8 ||
-				        h.IsIntegral) {
-					throw new NotSupportedException("The lua chunk format is not supported!");
-				}
-
-				var topFunction = ReadFunction(s, filename);
+			Run(ReadChunk(s, filename));
+		}
+		
+		private object[] Run(Function topFunction) {
+			return Run(new LuaThread(globals, topFunction));
+		}
+		
+		private object[] Run(FunctionClosure topFunction) {
+			return Run(new LuaThread(globals, topFunction));
+		}
+		
+		private object[] Run(LuaThread mainThread) {
+			LuaThread thread = mainThread;
+			thread.Status = Thread.StatusType.Running;
+			List<object> result = new List<object>();
+			
+			ThreadResult tResult;
+			Dictionary<LuaThread, LuaThread> calledBy = new Dictionary<LuaThread, LuaThread>();
+			do {
+				EmptyFunc pushResults = delegate() {
+					if (thread.func.returnsSaved >= 1) {
+						thread.func.Top = thread.func.returnRegister + thread.func.returnsSaved - 1;
+						for (int i = 0; i < thread.func.returnsSaved-1; ++i) {
+							thread.func.stack[thread.func.returnRegister+i] = i < result.Count ? result[i] : Nil.Value;
+						}
+					}
+					else {
+						thread.func.Top = thread.func.returnRegister + result.Count;
+						for (int i = 0; i < result.Count; ++i) {
+							thread.func.stack[thread.func.returnRegister+i] = i < result.Count ? result[i] : Nil.Value;
+						}
+					}
+				};
 				
-				LuaThread thread = new LuaThread(globals, topFunction);
-				thread.Status = Thread.StatusType.Running;
-				List<object> result = new List<object>();
-				
-				ThreadResult tResult;
-				Dictionary<LuaThread, LuaThread> calledBy = new Dictionary<LuaThread, LuaThread>();
 				do {
-					EmptyFunc pushResults = delegate() {
-						if (thread.func.returnsSaved >= 1) {
-							thread.func.Top = thread.func.returnRegister + thread.func.returnsSaved - 1;
-							for (int i = 0; i < thread.func.returnsSaved-1; ++i) {
-								thread.func.stack[thread.func.returnRegister+i] = i < result.Count ? result[i] : Nil.Value;
-							}
-						}
-						else {
-							thread.func.Top = thread.func.returnRegister + result.Count;
-							for (int i = 0; i < result.Count; ++i) {
-								thread.func.stack[thread.func.returnRegister+i] = i < result.Count ? result[i] : Nil.Value;
-							}
-						}
-					};
-					
-					do {
+					try {
 						tResult = thread.Run();
-						
+					}
+					catch(Exception ex) {
+						tResult = new ThreadResult {
+							Type = ThreadResult.ResultType.Error,
+							Data = ex.ToString(),
+						};
+					}
+					
+					if (tResult.Type == ThreadResult.ResultType.FunctionCall || tResult.Type == ThreadResult.ResultType.Error) {
 						if (tResult.Type == ThreadResult.ResultType.FunctionCall) {
-							tResult.func.Run();
+							var tResultF = (InternalClosure)tResult.Data;
+							tResultF.Run();
 							
 							//Pop results
-							result = tResult.func.GetResults();
-							
-							if (result.Count != 0) {
-								if (result[0] is System.Enum) {
-									switch((VMCommand)result[0]) {
-										//1: The closure
-										case VMCommand.CO_CREATE:
-											var newFunction = (FunctionClosure)((FunctionClosure)result[1]).CreateCallableInstance();
-											newFunction.Prepare();
-											LuaThread newThread = new LuaThread(thread.func.env, newFunction);
-											result.Clear();
-											result.Add(newThread);
-											break;
-											
-										//1: the thread to resume
-										//2+: args to the thread
-										case VMCommand.CO_RESUME:
-											calledBy.Add((LuaThread)result[1], thread);
-											thread.Status = Thread.StatusType.Normal;
-											thread = (LuaThread)result[1];
-											thread.Status = Thread.StatusType.Running;
-											if (!thread.Running) {
-												for (int i = 2; i < result.Count; ++i) {
-													thread.func.AddParam(result[i]);
+							result = tResultF.GetResults();
+						}
+						else { //It was an error
+							result = new List<object> { VMCommand.ERROR, tResult.Data /*Error msg*/ };
+						}
+						
+						if (result.Count != 0) {
+							if (result[0] is System.Enum) {
+								switch((VMCommand)result[0]) {
+									//1: The closure
+									case VMCommand.CO_CREATE:
+										var newFunction = (FunctionClosure)((FunctionClosure)result[1]).CreateCallableInstance();
+										newFunction.Prepare();
+										LuaThread newThread = new LuaThread(thread.func.env, newFunction);
+										result.Clear();
+										result.Add(newThread);
+										break;
+										
+									//1: the thread to resume
+									//2+: args to the thread
+									case VMCommand.CO_RESUME:
+										calledBy.Add((LuaThread)result[1], thread);
+										thread.Status = Thread.StatusType.Normal;
+										thread = (LuaThread)result[1];
+										thread.Status = Thread.StatusType.Running;
+										if (!thread.Running) {
+											for (int i = 2; i < result.Count; ++i) {
+												thread.func.AddParam(result[i]);
+											}
+											continue;
+										}
+										//Else just pass them as return values to yield
+										result.RemoveRange(0, 2); // Remove the command and the thread
+										break;
+										
+									case VMCommand.CO_RUNNING:
+										result.Clear();
+										if (calledBy.ContainsKey(thread)) {
+											result.Add(thread);
+										}
+										else {
+											result.Add(Nil.Value);
+										}
+										break;
+										
+									//1+: return values to resume
+									case VMCommand.CO_YIELD:
+										var caller = calledBy[thread];
+										calledBy.Remove(thread);
+										thread.Status = Thread.StatusType.Suspended;
+										thread = caller;
+										thread.Status = Thread.StatusType.Running;
+										result.RemoveAt(0); // Remove command
+										break;
+										
+									case VMCommand.PCALL:
+										thread.func.errorHandler = true;
+										break;
+										
+									//1: error msg
+									case VMCommand.ERROR:
+										//Pop all stacks until an error handler is found
+										var stackTrace = new List<string>();
+										string errorMsg = string.Intern(thread.ErrorString + ": " + (string)result[1]);
+										result[1] = errorMsg;
+										FunctionClosure fc;
+										do {
+											fc = thread.PopFrame();
+											if (fc == null) {
+												//Thread finished without handling the error, start unwinding the calling thread
+												if (calledBy.Count == 0) {
+													stackTrace.Add("\t" + thread.ErrorString + ": in main chunk");
+													//Last thread finished without handling the error, bailing out
+													throw new LuaScriptException(errorMsg, stackTrace.ToArray());
 												}
+												
+												var callerThread = calledBy[thread];
+												calledBy.Remove(thread);
+												thread = callerThread;
+												stackTrace.Add("\t" + thread.ErrorString + ": in lua thread");
 												continue;
 											}
-											//Else just pass them as return values to yield
-											result.RemoveRange(0, 2); // Remove the command and the thread
-											break;
-											
-										case VMCommand.CO_RUNNING:
-											result.Clear();
-											if (calledBy.ContainsKey(thread)) {
-												result.Add(thread);
-											}
-											else {
-												result.Add(Nil.Value);
-											}
-											break;
-											
-										//1+: return values to resume
-										case VMCommand.CO_YIELD:
-											var caller = calledBy[thread];
-											calledBy.Remove(thread);
-											thread.Status = Thread.StatusType.Suspended;
-											thread = caller;
-											thread.Status = Thread.StatusType.Running;
-											result.RemoveAt(0); // Remove command
-											break;
-											
-										case VMCommand.PCALL:
-											thread.func.errorHandler = true;
-											break;
-											
-										//1: error msg
-										case VMCommand.ERROR:
-											//Pop all stacks until an error handler is found
-											var stackTrace = new List<string>();
-											string errorMsg = string.Intern(thread.ErrorString + ": " + (string)result[1]);
-											result[1] = errorMsg;
-											FunctionClosure fc;
-											do {
-												fc = thread.PopFrame();
-												if (fc == null) {
-													//Thread finished without handling the error, start unwinding the calling thread
-													if (calledBy.Count == 0) {
-														//Last thread finished without handling the error, bailing out
-														throw new LuaScriptException(errorMsg, stackTrace.ToArray());
-													}
-													
-													var callerThread = calledBy[thread];
-													calledBy.Remove(thread);
-													thread = callerThread;
-													stackTrace.Add("\tlua thread");
-													continue;
-												}
-												else if (fc.errorHandler == true) break;
-												stackTrace.Add("\tlua function");
-											} while (true);
-											result[0] = false;
-											break;
-									}
+											else if (fc.errorHandler == true) break;
+											stackTrace.Add("\t"+ thread.ErrorString +": in lua function");
+										} while (true);
+										result[0] = false;
+										break;
 								}
 							}
-							pushResults();
 						}
-					} while(tResult.Type != ThreadResult.ResultType.Dead);
-					thread.Status = Thread.StatusType.Dead;
-					
-					if (calledBy.Count == 0) break;
-					
-					result = thread.func.GetResults();
-					var prevThread = calledBy[thread];
-					calledBy.Remove(thread);
-					thread = prevThread;
-					pushResults();
-					
-				} while(true);
-			}
-			catch (System.IO.IOException ex) {
-				throw new MalformedChunkException(ex);
-			}
+						pushResults();
+					}
+				} while(tResult.Type != ThreadResult.ResultType.Dead);
+				thread.Status = Thread.StatusType.Dead;
+				
+				if (calledBy.Count == 0) break;
+				
+				result = thread.func.GetResults();
+				var prevThread = calledBy[thread];
+				calledBy.Remove(thread);
+				thread = prevThread;
+				pushResults();
+				
+			} while(true);
+			return thread.func.stack.ToArray();
 		}
 
 		
@@ -292,6 +318,12 @@ namespace ManagedLua.Interpreter {
 			public byte NumberSize;
 			public bool IsIntegral;
 		}
+		
+		private struct LocalVar {
+			public string Name;
+			public uint StartPc;
+			public uint EndPc;
+		}
 
 		private struct Function {
 			public byte UpValues;
@@ -303,6 +335,9 @@ namespace ManagedLua.Interpreter {
 			public object[] Constants;
 			public Function[] Functions;
 			public string FileName;
+			
+			public uint[] SourcePosition;
+			public LocalVar[] LocalVars;
 		}
 
 		const byte VARARG_HASARG = 1;
@@ -317,6 +352,29 @@ namespace ManagedLua.Interpreter {
 		#endregion
 
 		#region Chunk Readers
+		
+		private Function ReadChunk(Stream s, string fileName) {
+			try {
+				Headers h = ReadHeaders(s);
+				if (Array.IndexOf(SUPPORTED_VERSIONS, h.Version) == -1 ||
+				        h.Format != 0 ||
+				        h.Endian == 0 && BitConverter.IsLittleEndian ||
+				        h.Endian == 1 && !BitConverter.IsLittleEndian ||
+				        h.IntSize != 4 ||
+				        h.Size_tSize != 4 ||
+				        h.InstructionSize != 4 ||
+				        h.NumberSize != 8 ||
+				        h.IsIntegral) {
+					throw new NotSupportedException("The lua chunk format is not supported!");
+				}
+				return ReadFunction(s, fileName);
+			}
+			catch (System.IO.IOException ex) {
+				throw new MalformedChunkException(ex);
+			}
+		}
+
+
 		
 		private Headers ReadHeaders(Stream s) {
 			byte[] buffer = new byte[12];
@@ -356,31 +414,16 @@ namespace ManagedLua.Interpreter {
 				Constants = ReadConstants(s),
 				Functions = ReadFunctions(s, fileName),
 				FileName = fileName,
+				
+				SourcePosition = ReadSourcePosition(s),
+				LocalVars = ReadLocalVars(s),
 			};
-			
-			//Source line positions
-			ReadVoid(sizeof(int), s);
-
-			ReadVoidLocals(s);
 			
 			ReadVoidUpvalues(s);
 			
 			return ret;
 		}
 		
-		private void ReadVoid(int sizePerItem, Stream s) {
-			int size = ReadInt(s);
-			byte[] buffer = new byte[size*sizePerItem];
-			s.Read(buffer, 0, size*sizePerItem);
-		}
-		private void ReadVoidLocals(Stream s) {
-			int size = ReadInt(s);
-			for (int i = 0; i < size; ++i) {
-				ReadString(s);
-				ReadInt(s);
-				ReadInt(s);
-			}
-		}
 		private void ReadVoidUpvalues(Stream s) {
 			int size = ReadInt(s);
 			for (int i = 0; i < size; ++i) {
@@ -435,6 +478,24 @@ namespace ManagedLua.Interpreter {
 			}
 			return code;
 		}
+
+		private uint[] ReadSourcePosition(Stream s) {
+			return ReadCode(s); // Implementation is the same
+		}
+		
+		private LocalVar[] ReadLocalVars(Stream s) {
+			int size = ReadInt(s);
+			LocalVar[] vars = new LocalVar[size];
+			for (int i = 0; i < size; ++i) {
+				vars[i] = new LocalVar {
+					Name = ReadString(s),
+					StartPc = ReadUInt(s),
+					EndPc = ReadUInt(s),
+				};
+			}
+			return vars;
+		}
+		
 		
 		private class UpValue {
 			private object value = Nil.Value;
@@ -605,7 +666,16 @@ namespace ManagedLua.Interpreter {
 				}
 				
 				object ret;
-				ret = method.Invoke(host, callParams.ToArray());
+				
+				try {
+					ret = method.Invoke(host, callParams.ToArray());
+				}
+				catch (TargetInvocationException ex) {
+					stack.Clear();
+					stack.Add(VMCommand.ERROR);
+					stack.Add(ex.ToString());
+					return;
+				}
 				
 				stack.Clear();
 				
@@ -641,6 +711,7 @@ namespace ManagedLua.Interpreter {
 			
 			public FunctionClosure(Table env, Function f) {
 				this.env = env;
+				this.env.RawSet("_G", this.env);
 				this.f = f;
 				this.code = f.Code;
 				cSize = code.Length;
@@ -688,10 +759,11 @@ namespace ManagedLua.Interpreter {
 		
 		class ThreadResult {
 			public enum ResultType {
-				Dead, FunctionCall
+				Dead, FunctionCall, Error
 			}
 			public ResultType Type {get;set;}
-			public InternalClosure func {get;set;}
+			//public InternalClosure func {get;set;}
+			public object Data;
 		}
 		
 		class LuaThread: Thread {
@@ -712,10 +784,15 @@ namespace ManagedLua.Interpreter {
 			
 			public string ErrorString {
 				get {
-					return string.Intern(
-						string.Format("{0}:{1}",
-						              func.f.FileName,
-						              "-1"));
+					if (pc-1 < func.f.SourcePosition.Length) {
+						return string.Intern(
+							string.Format("{0}:{1}",
+							              func.f.FileName,
+							              func.f.SourcePosition[pc-1]));
+					}
+					else {
+						return string.Intern(func.f.FileName);
+					}
 				}
 			}
 			
@@ -982,8 +1059,8 @@ namespace ManagedLua.Interpreter {
 					case OpCode.DIV:
 					case OpCode.MOD:
 					case OpCode.POW: {
-							double op1 = (double)(B_const ? func.f.Constants[iB_RK] : func.stack[iB_RK]);
-							double op2 = (double)(C_const ? func.f.Constants[iC_RK] : func.stack[iC_RK]);
+							double op1 = Convert.ToDouble(B_const ? func.f.Constants[iB_RK] : func.stack[iB_RK], System.Globalization.CultureInfo.InvariantCulture);
+							double op2 = Convert.ToDouble(C_const ? func.f.Constants[iC_RK] : func.stack[iC_RK], System.Globalization.CultureInfo.InvariantCulture);
 							double result;
 							switch(opcode) {
 								case OpCode.ADD:
@@ -1016,16 +1093,32 @@ namespace ManagedLua.Interpreter {
 					 * R(A) := -R(B)
 					 */
 					case OpCode.UNM:
+						func.stack[iA] = -Convert.ToDouble(func.stack[iB]);
+						break;
 					/*
 					 * NOT A B
 					 * R(A) := not R(B)
 					 */
-					case OpCode.NOT:
+					case OpCode.NOT: {
+						object o = func.stack[iB];
+						func.stack[iA] = (o == Nil.Value || false.Equals(o)) ? true : false;
+						break;
+					}
 					/*
 					 * LEN A B
 					 * R(A) := length of R(B)
 					 */
-					case OpCode.LEN:
+					case OpCode.LEN: {
+						object o = func.stack[iB];
+						if (o is Table) func.stack[iA] = ((Table)o).Length;
+						else if (o is string) func.stack[iA] = ((string)o).Length;
+						//TODO: Call metamethod
+						else return new ThreadResult {
+							Type = ThreadResult.ResultType.Error,
+							Data = "Length operator can only be applied to tables and strings!",
+						};
+						break;
+					}
 					/*
 					 * CONCAT A B C
 					 * R(A) := R(B) .. (...) .. R(C), where R(B) ... R(C) are strings
@@ -1062,7 +1155,7 @@ namespace ManagedLua.Interpreter {
 					case OpCode.LE: {
 						object op1 = (B_const ? func.f.Constants[iB_RK] : func.stack[iB_RK]);
 						object op2 = (C_const ? func.f.Constants[iC_RK] : func.stack[iC_RK]);
-						bool opA = A != 0;
+						bool opA = A != 0u;
 						if (opcode == OpCode.LT && (LessThan(op1, op2) != opA)) ++pc;
 						if (opcode == OpCode.LE && (LessThanEquals(op1, op2) != opA)) ++pc;
 						if (opcode == OpCode.EQ && (VirtualMachine.Equals(op1, op2) != opA)) ++pc;
@@ -1105,7 +1198,14 @@ namespace ManagedLua.Interpreter {
 					 * R(A), ..., R(A+C-2) := R(A)(R(A+1), ..., R(A+B-1))
 					 */
 					case OpCode.CALL: {
-							ClosureBase c = ((ClosureBase)func.stack[iA]).CreateCallableInstance();
+							object o = func.stack[iA];
+							if (!(o is ClosureBase)) {
+								return new ThreadResult {
+									Type = ThreadResult.ResultType.Error,
+									Data = "Attempted to call a non-function",
+								};
+							}
+							ClosureBase c = ((ClosureBase)o).CreateCallableInstance();
 							c.Prepare();
 							//Push params
 							if (B >= 1) {
@@ -1123,7 +1223,7 @@ namespace ManagedLua.Interpreter {
 								func.returnsSaved = iC;
 								return new ThreadResult {
 									Type = ThreadResult.ResultType.FunctionCall,
-									func = (InternalClosure)c
+									Data = c
 								};
 							}
 							else {
@@ -1255,7 +1355,7 @@ namespace ManagedLua.Interpreter {
 									func.returnsSaved = iC+1;
 									return new ThreadResult {
 										Type = ThreadResult.ResultType.FunctionCall,
-										func = (InternalClosure)c
+										Data = c
 									};
 								}
 								else {
@@ -1311,12 +1411,12 @@ namespace ManagedLua.Interpreter {
 							
 							if (B > 0) {
 								for (int i = 1; i <= B; ++i) {
-									t[(double)i] = func.stack[iA+i];
+									t[block_start + (double)i] = func.stack[iA+i];
 								}
 							}
 							else {
 								for (int i = 1; i < func.Top; ++i) {
-									t[(double)i] = func.stack[iA+i];
+									t[block_start + (double)i] = func.stack[iA+i];
 								}
 							}
 							break;
@@ -1429,12 +1529,59 @@ namespace ManagedLua.Interpreter {
 
 		#endregion
 		
-		private class VMInterface : LuaVM {
+		private class VMInterface : LuaVM, IDisposable {
 			private VirtualMachine vm;
 			public VMInterface(VirtualMachine vm) { this.vm = vm; }
 			
 			public Closure WrapFunction(MethodInfo method, object obj) {
 				return new InternalClosure(method, obj);
+			}
+			
+			public Closure CompileString(string str, string filename) {
+				#if PINVOKE_ENABLED
+				string luaFileName = Path.GetTempFileName();
+				string luacFileName = Path.GetTempFileName();
+				try {
+					File.WriteAllText(luaFileName, str);
+					var psinfo = new System.Diagnostics.ProcessStartInfo();
+					psinfo.FileName = "luac";
+					psinfo.WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden;
+					psinfo.Arguments = string.Format("-o \"{0}\" \"{1}\"", luacFileName, luaFileName);
+					System.Diagnostics.Process.Start(psinfo).WaitForExit();
+					Function f;
+					using (FileStream fs = File.OpenRead(luacFileName)) {
+						f = vm.ReadChunk(fs, filename);
+					}
+					FunctionClosure fc = new VirtualMachine.FunctionClosure(vm.globals, f);
+					return fc;
+				}
+				finally {
+					File.Delete(luacFileName);
+					File.Delete(luaFileName);
+				}
+				
+				#else
+				throw new NotSupportedException("Cannot compile lua strings without the native luac.");
+				#endif
+			}
+			
+			public Closure Load(Stream s, string filename) {
+				return new FunctionClosure(vm.globals, vm.ReadChunk(s, filename));
+			}
+			
+			public object[] Call(Closure c, params object[] args) {
+				var cb = ((ClosureBase)c).CreateCallableInstance();
+				cb.Prepare();
+				foreach(var arg in args) {
+					cb.AddParam(arg);
+				}
+				if (cb is InternalClosure) {
+					((InternalClosure)cb).Run();
+					return cb.GetResults().ToArray();
+				}
+				else { //cb is FunctionClosure
+					return vm.Run((FunctionClosure)cb);
+				}
 			}
 			
 			public object GetGlobalVar(object key) {
@@ -1444,7 +1591,17 @@ namespace ManagedLua.Interpreter {
 			public void SetGlobalVar(object key, object value) {
 				vm.globals[key] = value;
 			}
+			
+			public event EventHandler Shutdown;
+			
+			public void Dispose() {
+				if (Shutdown != null) Shutdown(this, new EventArgs());
+			}
 		}
 		private VMInterface vminterface;
+		
+		void IDisposable.Dispose() {
+			vminterface.Dispose();
+		}
 	}
 }

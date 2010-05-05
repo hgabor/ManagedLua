@@ -41,7 +41,10 @@ namespace ManagedLua.Interpreter {
 				return (bool)op1 == (bool)op2;
 			}*/
 			//Metamethods are not supported yet
-			return op1.Equals(op2);
+			if (op1 is double && op2 is double) {
+				return (double)op1 == (double)op2;
+			}
+			else return object.Equals(op1, op2);
 		}
 	}
 }

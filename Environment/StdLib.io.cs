@@ -52,7 +52,7 @@ namespace ManagedLua.Environment {
 			else {
 				throw new ArgumentException("Invalid file mode!");
 			}
-			Table t = new Table();
+			Table t = ((Table)vm.GetGlobalVar("file")).ShallowClone();
 			t["__internal_read"] = read;
 			t["__internal_write"] = write;
 			t["__internal_text"] = !binary;
@@ -73,6 +73,17 @@ namespace ManagedLua.Environment {
 				}
 			}
 			return DefaultOutFile;
+		}
+		
+		[Lib("io", "tmpfile")]
+		public Table io_tmpfile() {
+			string tmpname = Path.GetTempFileName();
+			Table handle = io_open(tmpname, "w+");
+			vm.Shutdown += (sender, args) => {
+				file_close(handle);
+				File.Delete(tmpname);
+			};
+			return handle;
 		}
 		
 		[Lib("io", "write")]
