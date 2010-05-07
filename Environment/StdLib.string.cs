@@ -8,7 +8,15 @@ namespace ManagedLua.Environment {
 		
 		[Lib("string", "format")]
 		public string string_format(string format, params object[] args) {
-			return string.Intern(printf.Printf.sprintf(format, args));
+			printf.FormatObject formatObject = new printf.FormatObject(format);
+			formatObject.AddFormatter('q', (fsp, obj) => {
+			                          	StringBuilder sb = new StringBuilder((string)obj);
+			                          	sb.Replace(@"\", @"\\").Replace("\n", @"\n").Replace("\r", @"\r").Replace("\0", @"\0").Replace("\"", "\\\"");
+			                          	sb.Insert(0, '"').Append('"');
+			                          	return sb.ToString();
+			                          });
+			formatObject.SetArgs(args);
+			return string.Intern(formatObject.ToString());
 		}
 		
 		[Lib("string", "rep")]

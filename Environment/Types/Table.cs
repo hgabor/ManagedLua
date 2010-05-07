@@ -8,7 +8,7 @@ namespace ManagedLua.Environment.Types {
 	/// <summary>
 	/// Description of Table.
 	/// </summary>
-	public class Table: IEnumerable {
+	public class Table: IEnumerable, IList {
 		public Table() {
 		}
 
@@ -215,11 +215,119 @@ namespace ManagedLua.Environment.Types {
 			return Nil.Value;
 		}
 
+		public void Sort(IComparer comp) {
+			var list = ArrayList.Adapter(this);
+			try {
+			list.Sort(comp);
+			}
+			catch {
+				throw;
+			}
+		}
+
 		public IEnumerator GetEnumerator() {
 			foreach	(var k in a.Keys)
 				yield return k;
 			foreach (var k in h.Keys)
 				yield return k;
+		}
+
+		object IList.this[int index] {
+			get {
+				return this[(double)index+1];
+			}
+			set {
+				this[(double)index+1] = value;
+			}
+		}
+
+		bool IList.IsReadOnly {
+			get {
+				return false;
+			}
+		}
+
+		bool IList.IsFixedSize {
+			get {
+				return false;
+			}
+		}
+
+		int ICollection.Count {
+			get {
+				return (int)this.Length;
+			}
+		}
+
+		object syncroot = new object();
+		object ICollection.SyncRoot {
+			get {
+				return this.syncroot;
+			}
+		}
+
+		bool ICollection.IsSynchronized {
+			get {
+				return false;
+			}
+		}
+
+		int IList.Add(object value) {
+			double length = Length;
+			this[length] = value;
+			return (int)length;
+		}
+
+		bool IList.Contains(object value) {
+			return (((IList)this).IndexOf(value)) != -1;
+		}
+
+		void IList.Clear() {
+			double length = Length;
+			for (double d = 1; d <= length; ++d) {
+				this[d] = Nil.Value;
+			}
+		}
+
+		int IList.IndexOf(object value) {
+			double length = Length;
+			for (double d = 1; d <= length; ++d) {
+				if (object.Equals(a[d], value)) {
+					return (int)d - 1;
+				}
+			}
+			return -1;
+		}
+
+		void IList.Insert(int index, object value) {
+			for (double d = Length; d >= index+1; --d) {
+				a[d+1] = a[d];
+			}
+			a[(double)index] = value;
+		}
+
+		void IList.Remove(object value) {
+			IList ithis = (IList)this;
+			ithis.RemoveAt(ithis.IndexOf(value));
+		}
+
+		void IList.RemoveAt(int index) {
+			double length = Length;
+			for (double d = (double)index+1; d < length; ++d) {
+				a[d] = a[d+1];
+			}
+			a[length] = Nil.Value;
+		}
+
+		void ICollection.CopyTo(Array array, int index) {
+			int i = index;
+			double d = 0;
+			double length = Length;
+			while(i < array.Length && d < length) {
+				array.SetValue(a[d], i);
+				++i;
+				++d;
+			}
 		}
 	}
 }

@@ -13,3 +13,7 @@ coroutine.wrap = function(f)
 	end
 end
 
+
+__internal_lessthan = function(a, b)
+	return a < b
+end

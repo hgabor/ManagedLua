@@ -37,12 +37,23 @@ namespace ManagedLua.Environment {
 			this.vm = vm;
 			this.Init_package();
 		}
+		
+		public static bool ToBool(object value) {
+			if (value == Nil.Value) return false;
+			else if (value is bool) return (bool)value;
+			else return true;
+		}
 
 		[Lib("assert")]
 		[MultiRet]
 		public object[] assert(object v, [Optional("assertion failed!")] string msg) {
 			if (v != Nil.Value && !false.Equals(v)) return new object[] { v, msg };
 			else return new object[] { VMCommand.ERROR, msg };
+		}
+		
+		[Lib("collectgarbage")]
+		public void collectgarbage(params object[] args) {
+			//GC.Collect();
 		}
 
 		//TODO: Level attribute
@@ -74,13 +85,21 @@ namespace ManagedLua.Environment {
 
 		[Lib("loadstring")]
 		public Closure loadstring(string code, [OptionalAttribute] object chunkname) {
-			return vm.CompileString(code, chunkname == Nil.Value ? code : chunkname.ToString());
+			string codename;
+			if (chunkname == Nil.Value) {
+				codename = code.Trim();
+				codename = code.Substring(0, Math.Min(codename.Length, 20));
+			}
+			else {
+				codename = chunkname.ToString();
+			}
+			return vm.CompileString(code, codename);
 		}
 
 		[Lib("next")]
 		[MultiRet]
 		public object[] next(Table table, params object[] p) {
-			object index = (p.Length > 0 || p[0] == Nil.Value)  ? p[0] : Nil.Value;
+			object index = p.Length > 0 ? p[0] : Nil.Value;
 			index = table.NextKey(index);
 			object o = table[index];
 			if (o == Nil.Value) {
@@ -223,7 +242,7 @@ namespace ManagedLua.Environment {
 		[MultiRet]
 		public object[] unpack(Table table, params object[] l) {
 			double i = l.Length >= 1 ? (double)l[0] : 1;
-			double j = l.Length >= 1 ? (double)l[0] : table.Length;
+			double j = l.Length >= 2 ? (double)l[1] : table.Length;
 
 			var ret = new List<object>();
 			while (i <= j) {

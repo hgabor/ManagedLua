@@ -146,11 +146,11 @@ namespace ManagedLua.Interpreter {
 		}
 		
 		private object[] Run(Function topFunction) {
-			return Run(new LuaThread(globals, topFunction));
+			return Run(new LuaThread(globals, topFunction, this));
 		}
 		
 		private object[] Run(FunctionClosure topFunction) {
-			return Run(new LuaThread(globals, topFunction));
+			return Run(new LuaThread(globals, topFunction, this));
 		}
 		
 		private object[] Run(LuaThread mainThread) {
@@ -171,7 +171,7 @@ namespace ManagedLua.Interpreter {
 					else {
 						thread.func.Top = thread.func.returnRegister + result.Count;
 						for (int i = 0; i < result.Count; ++i) {
-							thread.func.stack[thread.func.returnRegister+i] = i < result.Count ? result[i] : Nil.Value;
+							thread.func.stack[thread.func.returnRegister+i] = result[i];
 						}
 					}
 				};
@@ -189,11 +189,16 @@ namespace ManagedLua.Interpreter {
 					
 					if (tResult.Type == ThreadResult.ResultType.FunctionCall || tResult.Type == ThreadResult.ResultType.Error) {
 						if (tResult.Type == ThreadResult.ResultType.FunctionCall) {
-							var tResultF = (InternalClosure)tResult.Data;
-							tResultF.Run();
-							
-							//Pop results
-							result = tResultF.GetResults();
+							try {
+								var tResultF = (InternalClosure)tResult.Data;
+								tResultF.Run();
+								
+								//Pop results
+								result = tResultF.GetResults();
+							}
+							catch (Exception ex) {
+								result = new List<object> { VMCommand.ERROR, ex.ToString() /*Error msg*/ };
+							}
 						}
 						else { //It was an error
 							result = new List<object> { VMCommand.ERROR, tResult.Data /*Error msg*/ };
@@ -205,8 +210,7 @@ namespace ManagedLua.Interpreter {
 									//1: The closure
 									case VMCommand.CO_CREATE:
 										var newFunction = (FunctionClosure)((FunctionClosure)result[1]).CreateCallableInstance();
-										newFunction.Prepare();
-										LuaThread newThread = new LuaThread(thread.func.env, newFunction);
+										LuaThread newThread = new LuaThread(thread.func.env, newFunction, this);
 										result.Clear();
 										result.Add(newThread);
 										break;
@@ -566,16 +570,28 @@ namespace ManagedLua.Interpreter {
 		/// </summary>
 		abstract class ClosureBase: Closure {
 			//TODO: IsPrototype check
-			protected internal List<object> stack;
-			protected internal int Top { get; set; }
+			protected internal List<object> stack = new List<object>();
+			private int top;
+			protected internal int Top {
+				get { return top; }
+				set {
+					top = value;
+					while (stack.Count < top) { stack.Add(Nil.Value); }
+				}
+			}
 			
 			/// <summary>
-			/// Prepares the closure for function call:
-			/// Resets internal variables, clears the stack etc.
+			/// Creates a closure with default properties.
 			/// </summary>
-			public virtual void Prepare() {
-				stack = new List<object>();
-				Top = 0;
+			public ClosureBase() {}
+			
+			/// <summary>
+			/// Creates a closure based on another one, by copying stack contents.
+			/// </summary>
+			/// <param name="source">The source closure</param>
+			protected ClosureBase(ClosureBase source) {
+				this.stack.AddRange(source.stack);
+				this.top = source.top;
 			}
 			
 			/// <summary>
@@ -597,12 +613,9 @@ namespace ManagedLua.Interpreter {
 			
 			/// <summary>
 			/// Creates a callable closure of the prototype.
-			/// Don't forget to call the Prepare method on the resulting Closure.
 			/// </summary>
 			/// <returns>The callable closure</returns>
-			public ClosureBase CreateCallableInstance() {
-				return (ClosureBase)this.MemberwiseClone();
-			}
+			public abstract ClosureBase CreateCallableInstance();
 		}
 		
 		/// <summary>
@@ -620,6 +633,15 @@ namespace ManagedLua.Interpreter {
 			public InternalClosure(MethodInfo method, object host) {
 				this.host = host;
 				this.method = method;
+			}
+			
+			private InternalClosure(InternalClosure source) : base(source) {
+				this.host = source.host;
+				this.method = source.method;
+			}
+			
+			public override VirtualMachine.ClosureBase CreateCallableInstance() {
+				return new InternalClosure(this);
 			}
 			
 			public void Run() {
@@ -715,20 +737,22 @@ namespace ManagedLua.Interpreter {
 				this.f = f;
 				this.code = f.Code;
 				cSize = code.Length;
-			}
-			
-			public FunctionClosure(Table env, FunctionClosure f) : this(env, f.f) {
-				upValues.AddRange(f.upValues);
-			}
-			
-			public override void Prepare() {
-				base.Prepare();
 				pc = 0;
 				newUpValues = new List<UpValue>();
 				if ((f.IsVarargFlag & VARARG_ISVARARG) != 0) {
 					vararg = new List<object>();
 				}
 			}
+			
+			public FunctionClosure(Table env, FunctionClosure f) : this(env, f.f) {
+				stack.AddRange(f.stack);
+				upValues.AddRange(f.upValues);
+			}
+			
+			public override VirtualMachine.ClosureBase CreateCallableInstance() {
+				return new FunctionClosure(this.env, this);
+			}
+			
 			
 			internal List<UpValue> upValues = new List<UpValue>();
 			public void AddUpValue(UpValue uv) {
@@ -811,20 +835,21 @@ namespace ManagedLua.Interpreter {
 			
 			public bool Running { get; private set; }
 			
-			public LuaThread(Table env, Function f) {
+			VirtualMachine vm;
+			public LuaThread(Table env, Function f, VirtualMachine vm) {
 				func = new FunctionClosure(env, f);
-				func.Prepare();
 				this.code = f.Code;
 				cSize = code.Length;
 				Running = false;
+				this.vm = vm;
 			}
 			
-			public LuaThread(Table env, FunctionClosure fc) {
+			public LuaThread(Table env, FunctionClosure fc, VirtualMachine vm) {
 				func = new FunctionClosure(env, fc);
-				func.Prepare();
 				this.code = fc.f.Code;
 				cSize = code.Length;
 				Running = false;
+				this.vm = vm;
 			}
 			
 			FunctionClosure creatingClosure;
@@ -1156,9 +1181,9 @@ namespace ManagedLua.Interpreter {
 						object op1 = (B_const ? func.f.Constants[iB_RK] : func.stack[iB_RK]);
 						object op2 = (C_const ? func.f.Constants[iC_RK] : func.stack[iC_RK]);
 						bool opA = A != 0u;
-						if (opcode == OpCode.LT && (LessThan(op1, op2) != opA)) ++pc;
-						if (opcode == OpCode.LE && (LessThanEquals(op1, op2) != opA)) ++pc;
-						if (opcode == OpCode.EQ && (VirtualMachine.Equals(op1, op2) != opA)) ++pc;
+						if (opcode == OpCode.LT && (vm.LessThan(op1, op2) != opA)) ++pc;
+						if (opcode == OpCode.LE && (vm.LessThanEquals(op1, op2) != opA)) ++pc;
+						if (opcode == OpCode.EQ && (vm.Equals(op1, op2) != opA)) ++pc;
 						break;
 					}
 
@@ -1168,7 +1193,7 @@ namespace ManagedLua.Interpreter {
 					 */
 					case OpCode.TEST: {
 							bool bC = C != 0;
-							bool bA = ToBool(func.stack[iA]);
+							bool bA = StdLib.ToBool(func.stack[iA]);
 							if (bC != bA) {
 								++pc;
 							}
@@ -1182,7 +1207,7 @@ namespace ManagedLua.Interpreter {
 					 */
 					case OpCode.TESTSET: {
 							bool bC = C != 0;
-							bool bB = ToBool(func.stack[iB]);
+							bool bB = StdLib.ToBool(func.stack[iB]);
 							if (bC == bB) {
 								func.stack[iA] = func.stack[iB];
 							}
@@ -1206,7 +1231,6 @@ namespace ManagedLua.Interpreter {
 								};
 							}
 							ClosureBase c = ((ClosureBase)o).CreateCallableInstance();
-							c.Prepare();
 							//Push params
 							if (B >= 1) {
 								for (int i = 0; i < B-1; ++i) {
@@ -1346,7 +1370,6 @@ namespace ManagedLua.Interpreter {
 								--pc;
 								++cycle;
 								ClosureBase c = ((ClosureBase)func.stack[iA]).CreateCallableInstance();
-								c.Prepare();
 								//Push params
 								c.AddParam(func.stack[iA+1]);
 								c.AddParam(func.stack[iA+2]);
@@ -1415,7 +1438,7 @@ namespace ManagedLua.Interpreter {
 								}
 							}
 							else {
-								for (int i = 1; i < func.Top; ++i) {
+								for (int i = 1; iA + i < func.Top; ++i) {
 									t[block_start + (double)i] = func.stack[iA+i];
 								}
 							}
@@ -1571,7 +1594,6 @@ namespace ManagedLua.Interpreter {
 			
 			public object[] Call(Closure c, params object[] args) {
 				var cb = ((ClosureBase)c).CreateCallableInstance();
-				cb.Prepare();
 				foreach(var arg in args) {
 					cb.AddParam(arg);
 				}
