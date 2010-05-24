@@ -4,8 +4,8 @@
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">x86</Platform>
     <OutputType>Library</OutputType>
-    <RootNamespace>Interpreter</RootNamespace>
-    <AssemblyName>Interpreter</AssemblyName>
+    <RootNamespace>ManagedLua.Interpreter</RootNamespace>
+    <AssemblyName>ManagedLua.Interpreter</AssemblyName>
     <TargetFrameworkVersion>v2.0</TargetFrameworkVersion>
     <SourceAnalysisOverrideSettingsFile>C:\Documents and Settings\KILLER\Application Data\ICSharpCode/SharpDevelop3.0\Settings.SourceAnalysis</SourceAnalysisOverrideSettingsFile>
     <AllowUnsafeBlocks>False</AllowUnsafeBlocks>
@@ -42,6 +42,13 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="ClosureBase.cs" />
+    <Compile Include="FunctionClosure.cs" />
+    <Compile Include="InternalClosure.cs" />
+    <Compile Include="LuaThread.cs" />
+    <Compile Include="OpCode.cs" />
+    <Compile Include="ThreadResult.cs" />
+    <Compile Include="UpValue.cs" />
     <Compile Include="VirtualMachine.cs" />
     <Compile Include="VirtualMachine.Helpers.cs" />
     <None Include="stdlib.luac">

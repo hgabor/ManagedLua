@@ -5,7 +5,7 @@ using ManagedLua.Environment.Types;
 
 namespace ManagedLua.Interpreter {
 	public partial class VirtualMachine {
-		private bool LessThan(object op1, object op2) {
+		internal bool LessThan(object op1, object op2) {
 			if (op1 is double && op2 is double) {
 				return (double)op1 < (double)op2;
 			}
@@ -31,7 +31,7 @@ namespace ManagedLua.Interpreter {
 			}
 		}
 
-		private bool LessThanEquals(object op1, object op2) {
+		internal bool LessThanEquals(object op1, object op2) {
 			if (op1 is double && op2 is double) {
 				return (double)op1 <= (double)op2;
 			}
@@ -63,7 +63,7 @@ namespace ManagedLua.Interpreter {
 			}
 		}
 
-		private new bool Equals(object op1, object op2) {
+		internal new bool Equals(object op1, object op2) {
 			/*if (op1.GetType() != op2.GetType()) return false;
 			if (op1 is double && op2 is double) {
 				return (double)op1 == (double)op2;
@@ -92,7 +92,7 @@ namespace ManagedLua.Interpreter {
 			return new Table();
 		}
 		
-		private object GetElement(object obj, object key) {
+		internal object GetElement(object obj, object key) {
 			Table t = obj as Table;
 			object h;
 			if (t != null) {
