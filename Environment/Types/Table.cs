@@ -77,15 +77,6 @@ namespace ManagedLua.Environment.Types {
 				if (a.ContainsKey(key)) {
 					return a[key];
 				}
-				else if (metatable != null) {
-					object o = metatable["__index"];
-					if (o is Table) {
-						return ((Table)o)[key];
-					}
-					else {
-						return Nil.Value;
-					}
-				}
 				else
 					return Nil.Value;
 			}
@@ -114,39 +105,6 @@ namespace ManagedLua.Environment.Types {
 			}
 			else
 				return Nil.Value;
-		}
-
-
-		public void RawSet(object key, object value) {
-			if (key is double) this.RawSet((double)key, value);
-			if (value == Nil.Value) {
-				h.Remove(key);
-			}
-			else {
-				h[key] = value;
-			}
-		}
-
-		public object RawGet(double key) {
-			if (a.ContainsKey(key)) {
-				return a[key];
-			}
-			else
-				return Nil.Value;
-		}
-
-		public void RawSet(double key, object value) {
-			if (value == Nil.Value) {
-				a.Remove(key);
-			}
-			else {
-				if (a.ContainsKey(key)) {
-					a[key] = value;
-				}
-				else {
-					a.Add(key, value);
-				}
-			}
 		}
 
 		public Table ShallowClone() {
@@ -180,9 +138,6 @@ namespace ManagedLua.Environment.Types {
 				return metatable;
 			}
 			set {
-				if (metatable != null) {
-					throw new InvalidOperationException("Table already has a metatable");
-				}
 				metatable = value;
 			}
 		}

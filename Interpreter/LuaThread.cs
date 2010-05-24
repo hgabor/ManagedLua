@@ -8,7 +8,7 @@ using Function = ManagedLua.Interpreter.VirtualMachine.Function;
 namespace ManagedLua.Interpreter {
 	class LuaThread: Thread {
 		internal FunctionClosure func;
-		Stack<FunctionClosure> frames = new Stack<FunctionClosure>();
+		internal Stack<FunctionClosure> frames = new Stack<FunctionClosure>();
 
 		public FunctionClosure PopFrame() {
 			if (frames.Count == 0) return null;
@@ -198,12 +198,12 @@ namespace ManagedLua.Interpreter {
 				 */
 				case OpCode.GETGLOBAL: {
 					object c = func.f.Constants[Bx];
-					func.stack[iA] = func.env[c];
+					func.stack[iA] = vm.GetElement(func.env, c);
 					break;
 				}
 
 				/*
-				 * A B C
+				 * GETTABLE A B C
 				 * R(A) := R(B)[RK(C)]
 				 */
 				case OpCode.GETTABLE: {
@@ -216,7 +216,7 @@ namespace ManagedLua.Interpreter {
 						index = func.stack[iC_RK];
 					}
 
-					func.stack[iA] = t[index];
+					func.stack[iA] = vm.GetElement(t, index);
 					break;
 				}
 
@@ -226,7 +226,7 @@ namespace ManagedLua.Interpreter {
 				 */
 				case OpCode.SETGLOBAL: {
 					object c = func.f.Constants[Bx];
-					func.env[c] = func.stack[iA];
+					vm.NewIndex(func.env, c, func.stack[iA]);
 					break;
 				}
 
@@ -251,7 +251,7 @@ namespace ManagedLua.Interpreter {
 					else {
 						index = func.stack[iB_RK];
 					}
-					t[index] = C_const ? func.f.Constants[iC_RK] : func.stack[iC_RK];
+					vm.NewIndex(t, index, C_const ? func.f.Constants[iC_RK] : func.stack[iC_RK]);
 					break;
 				}
 

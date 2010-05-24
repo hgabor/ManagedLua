@@ -26,7 +26,7 @@ namespace ManagedLua.Interpreter {
 
 		public FunctionClosure(Table env, Function f) {
 			this.env = env;
-			this.env.RawSet("_G", this.env);
+			this.env["_G"] = this.env;
 			this.f = f;
 			this.code = f.Code;
 			cSize = code.Length;

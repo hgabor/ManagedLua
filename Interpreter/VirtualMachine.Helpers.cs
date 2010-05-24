@@ -83,13 +83,17 @@ namespace ManagedLua.Interpreter {
 		
 		Dictionary<Type, Table> metatables = new Dictionary<Type, Table>();
 		
-		private Table GetMetatable(object obj) {
-			if (obj is Table) return ((Table)obj).Metatable ?? new Table();
+		private Table GetMetatableOrNull(object obj) {
+			if (obj is Table) return ((Table)obj).Metatable;
 			//TODO: userdata support
 			if (metatables.ContainsKey(obj.GetType())) {
 				return metatables[obj.GetType()];
 			}
-			return new Table();
+			return null;
+		}
+		
+		private Table GetMetatable(object obj) {
+			return GetMetatableOrNull(obj) ?? new Table();
 		}
 		
 		internal object GetElement(object obj, object key) {
@@ -110,6 +114,81 @@ namespace ManagedLua.Interpreter {
 			}
 			else {
 				return GetElement(h, key);
+			}
+		}
+		
+		internal void NewIndex(object obj, object key, object value) {
+			object h;
+			Table t = obj as Table;
+			if (t != null) {
+				object v = t[key];
+				if (v != Nil.Value) {
+					t[key] = value;
+					return;
+				}
+				h = GetMetatable(t)["__newindex"];
+				if (h == Nil.Value) {
+					t[key] = value;
+					return;
+				}
+			}
+			else {
+				h = GetMetatable(obj)["__newindex"];
+				if (h == Nil.Value) {
+					throw new InvalidOperationException("Cannot add element to non-table object without __newindex metamethod!");
+				}
+			}
+			if (h is ClosureBase) {
+				vminterface.Call((ClosureBase)h, obj, key, value);
+			}
+			else {
+				NewIndex(h, key, value);
+			}
+		}
+		
+		private object _getmetatable(object o) {
+			Table mt = GetMetatableOrNull(o);
+			if (mt == null) return Nil.Value;
+			if (mt["__metatable"] != Nil.Value) return mt["__metatable"];
+			else return mt;
+		}
+		
+		[Environment.MultiRet]
+		private object[] _setfenv(object f, Table env) {
+			FunctionClosure fc = f as FunctionClosure;
+			if (fc != null) {
+				fc.env = env;
+				return new object[] { fc };
+			}
+			double? d = f as double?;
+			if (d != null) {
+				if (d == 0) {
+					currentThread.func.env = env;
+					return new object[] {};
+				}
+				else {
+					if (d != 1d) throw new NotSupportedException("Cannot access lower stack frames");
+					int id = currentThread.frames.Count - (int)d + 1;
+					if (id == currentThread.frames.Count) {
+						currentThread.func.env = env;
+						return new object[] { currentThread.func };
+					}
+					else {
+						currentThread.frames.Peek().env = env;
+						return new object[] { currentThread.func };
+					}
+				}
+			}
+			throw new ArgumentException("First argument must be a function or a number");
+		}
+		
+		private object _tostring(object o) {
+			object cl = GetMetatable(o)["__tostring"];
+			if (cl == Nil.Value) {
+				return o.ToString();
+			}
+			else {
+				return vminterface.Call((Closure)cl, o)[0];
 			}
 		}
 	}

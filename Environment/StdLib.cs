@@ -63,16 +63,6 @@ namespace ManagedLua.Environment {
 			return new object[] { VMCommand.ERROR, msg };
 		}
 
-		[Lib("getmetatable")]
-		public object getmetatable(object t) {
-			if (t is Table) {
-				return (object)((Table)t).Metatable ?? Nil.Value;
-			}
-			else {
-				throw new ArgumentException("getmetatable is only supported on tables");
-			}
-		}
-
 		[Lib("ipairs")]
 		[MultiRet]
 		public object[] ipairs(Table t) {
@@ -146,12 +136,12 @@ namespace ManagedLua.Environment {
 
 		[Lib("rawget")]
 		public object rawget(Table table, object key) {
-			return table.RawGet(key);
+			return table[key];
 		}
 
 		[Lib("rawset")]
 		public Table rawset(Table table, object key, object value) {
-			table.RawSet(key, value);
+			table[key] = value;
 			return table;
 		}
 
@@ -179,12 +169,24 @@ namespace ManagedLua.Environment {
 				throw new ArgumentOutOfRangeException("A number or \"#\" expected as first argument", "o");
 			}
 		}
-
-		//TODO: Metatable for UserData
+		
 		[Lib("setmetatable")]
-		public object setmetatable(object t, Table mt) {
-			if (t is Table) {
-				((Table)t).Metatable = mt;
+		public object setmetatable(object o, object mto) {
+			Table t = o as Table;
+			Table mt = mto as Table;
+			if (t != null) {
+				if (t.Metatable != null && t.Metatable["__metatable"] != Nil.Value) {
+					throw new InvalidOperationException("Table has a protected metatable");
+				}
+				else if (mto == Nil.Value) {
+					t.Metatable = null;
+				}
+				else if (mt != null) {
+					t.Metatable = mt;
+				}
+				else {
+					throw new ArgumentException("Metatable can only be a table");
+				}
 				return t;
 			}
 			else {
@@ -225,7 +227,7 @@ namespace ManagedLua.Environment {
 				return Nil.Value;
 			}
 		}
-
+		
 		[Lib("type")]
 		public string type(object value) {
 			if (value == Nil.Value) return "nil";

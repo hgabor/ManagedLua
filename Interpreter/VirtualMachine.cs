@@ -72,15 +72,23 @@ namespace ManagedLua.Interpreter {
 			Table io = (Table)globals["io"];
 			io["stdout"] = std.StdOut;
 			
+			RegisterFunction("_setfenv", this, null, "setfenv");
+			RegisterFunction("_getmetatable", this, null, "getmetatable");
+			RegisterFunction("_tostring", this, null, "tostring");
+			
 			Table stringMetatable = new Table();
 			stringMetatable["__index"] = globals["string"];
 			metatables.Add(typeof(string), stringMetatable);
 			
-			RegisterFunction(typeof(VirtualMachine).GetMethod("_setuperrorhandler", BindingFlags.NonPublic | BindingFlags.Instance), this, null, "__internal_setuperrorhandler");
+			RegisterFunction("_setuperrorhandler", this, null, "__internal_setuperrorhandler");
 			
 			using (FileStream fs = File.OpenRead("stdlib.luac")) {
 				Run(fs);
 			}
+		}
+		
+		private void RegisterFunction(string methodName, object host, string tableName, string funcName) {
+			RegisterFunction(host.GetType().GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Instance), host, tableName, funcName);
 		}
 		
 		private void RegisterFunction(MethodInfo m, object host, string tableName, string funcName) {
@@ -157,8 +165,9 @@ namespace ManagedLua.Interpreter {
 			return Run(new LuaThread(globals, topFunction, this));
 		}
 		
+		LuaThread currentThread = null;
 		private object[] Run(LuaThread mainThread) {
-			LuaThread thread = mainThread;
+			LuaThread thread = currentThread = mainThread;
 			thread.Status = Thread.StatusType.Running;
 			List<object> result = new List<object>();
 			
@@ -196,6 +205,7 @@ namespace ManagedLua.Interpreter {
 							try {
 								var tResultF = (InternalClosure)tResult.Data;
 								tResultF.Run();
+								currentThread = thread;
 								
 								//Pop results
 								result = tResultF.GetResults();
@@ -224,7 +234,7 @@ namespace ManagedLua.Interpreter {
 									case VMCommand.CO_RESUME:
 										calledBy.Add((LuaThread)result[1], thread);
 										thread.Status = Thread.StatusType.Normal;
-										thread = (LuaThread)result[1];
+										thread = currentThread = (LuaThread)result[1];
 										thread.Status = Thread.StatusType.Running;
 										if (!thread.Running) {
 											for (int i = 2; i < result.Count; ++i) {
@@ -251,7 +261,7 @@ namespace ManagedLua.Interpreter {
 										var caller = calledBy[thread];
 										calledBy.Remove(thread);
 										thread.Status = Thread.StatusType.Suspended;
-										thread = caller;
+										thread = currentThread = caller;
 										thread.Status = Thread.StatusType.Running;
 										result.RemoveAt(0); // Remove command
 										break;
@@ -279,7 +289,7 @@ namespace ManagedLua.Interpreter {
 												
 												var callerThread = calledBy[thread];
 												calledBy.Remove(thread);
-												thread = callerThread;
+												thread = currentThread = callerThread;
 												stackTrace.Add("\t" + thread.ErrorString + ": in lua thread");
 												continue;
 											}
@@ -301,7 +311,7 @@ namespace ManagedLua.Interpreter {
 				result = thread.func.GetResults();
 				var prevThread = calledBy[thread];
 				calledBy.Remove(thread);
-				thread = prevThread;
+				thread = currentThread = prevThread;
 				pushResults();
 				
 			} while(true);
