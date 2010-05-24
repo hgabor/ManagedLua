@@ -72,6 +72,10 @@ namespace ManagedLua.Interpreter {
 			Table io = (Table)globals["io"];
 			io["stdout"] = std.StdOut;
 			
+			Table stringMetatable = new Table();
+			stringMetatable["__index"] = globals["string"];
+			metatables.Add(typeof(string), stringMetatable);
+			
 			RegisterFunction(typeof(VirtualMachine).GetMethod("_setuperrorhandler", BindingFlags.NonPublic | BindingFlags.Instance), this, null, "__internal_setuperrorhandler");
 			
 			using (FileStream fs = File.OpenRead("stdlib.luac")) {
@@ -650,12 +654,7 @@ namespace ManagedLua.Interpreter {
 				var callParams = new List<object>();
 				
 				int i;
-				for (i = 0; i < methodParams.Length-1; ++i) {
-					Type t = methodParams[i].ParameterType;
-					if (!t.IsInstanceOfType(stack[i])) throw new ArgumentException();
-					callParams.Add(stack[i]);
-				}
-				if (i < methodParams.Length) {
+				for (i = 0; i < methodParams.Length; ++i) {
 					Type t = methodParams[i].ParameterType;
 					if (methodParams[i].GetCustomAttributes(typeof(ParamArrayAttribute), false).Length > 0) {
 						//This is a vararg function
@@ -666,25 +665,25 @@ namespace ManagedLua.Interpreter {
 							paramArray.Add(stack[i]);
 						}
 						callParams.Add(paramArray.ToArray());
+						break;
 					}
-					else {
-						object param;
-						if (i >= stack.Count) {
-							var attrs = methodParams[i].GetCustomAttributes(typeof(Environment.OptionalAttribute), false);
-							if (attrs.Length > 0) {
-								//This param is optional
-								param = ((Environment.OptionalAttribute)attrs[0]).DefaultValue;
-							}
-							else {
-								param = Nil.Value;
-							}
+					object param;
+					if (i >= stack.Count) {
+						var attrs = methodParams[i].GetCustomAttributes(typeof(Environment.OptionalAttribute), false);
+						if (attrs.Length > 0) {
+							//This param is optional
+							param = ((Environment.OptionalAttribute)attrs[0]).DefaultValue;
 						}
 						else {
-							param = stack[i];
+							param = Nil.Value;
 						}
-						if (!t.IsInstanceOfType(param)) throw new ArgumentException();
-						callParams.Add(param);
 					}
+					else {
+						param = stack[i];
+					}
+					
+					if (!t.IsInstanceOfType(param)) throw new ArgumentException();
+					callParams.Add(param);
 				}
 				
 				object ret;
@@ -1060,9 +1059,9 @@ namespace ManagedLua.Interpreter {
 					 * R(A) := R(B)[RK(C)]
 					 */
 					case OpCode.SELF: {
-						Table t = (Table)func.stack[iB];
+						object t = func.stack[iB];
 						var tKey = C_const ? func.f.Constants[iC_RK] : func.stack[iC_RK];
-						func.stack[iA] = t[tKey];
+						func.stack[iA] = vm.GetElement(t, tKey);
 						func.stack[iA+1] = t;
 						break;
 					}

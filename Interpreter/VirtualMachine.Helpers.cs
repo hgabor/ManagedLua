@@ -1,16 +1,16 @@
 ﻿
 using System;
+using System.Collections.Generic;
 using ManagedLua.Environment.Types;
 
 namespace ManagedLua.Interpreter {
 	public partial class VirtualMachine {
-		
 		private bool LessThan(object op1, object op2) {
 			if (op1 is double && op2 is double) {
 				return (double)op1 < (double)op2;
 			}
 			if (op1 is string && op2 is string) {
-				return string.Compare((string)op1, (string)op2) < 0;
+				return string.CompareOrdinal((string)op1, (string)op2) < 0;
 			}
 			else {
 				Table top1 = op1 as Table;
@@ -36,7 +36,7 @@ namespace ManagedLua.Interpreter {
 				return (double)op1 <= (double)op2;
 			}
 			if (op1 is string && op2 is string) {
-				return string.Compare((string)op1, (string)op2) <= 0;
+				return string.CompareOrdinal((string)op1, (string)op2) <= 0;
 			}
 			else {
 				Table top1 = op1 as Table;
@@ -79,6 +79,38 @@ namespace ManagedLua.Interpreter {
 				return (double)op1 == (double)op2;
 			}
 			else return object.Equals(op1, op2);
+		}
+		
+		Dictionary<Type, Table> metatables = new Dictionary<Type, Table>();
+		
+		private Table GetMetatable(object obj) {
+			if (obj is Table) return ((Table)obj).Metatable ?? new Table();
+			//TODO: userdata support
+			if (metatables.ContainsKey(obj.GetType())) {
+				return metatables[obj.GetType()];
+			}
+			return new Table();
+		}
+		
+		private object GetElement(object obj, object key) {
+			Table t = obj as Table;
+			object h;
+			if (t != null) {
+				object v = t[key];
+				if (v != Nil.Value) return v;
+				h = GetMetatable(t)["__index"];
+				if (h == Nil.Value) return Nil.Value;
+			}
+			else {
+				h = GetMetatable(obj)["__index"];
+				if (h == Nil.Value) throw new InvalidOperationException("Cannot index non-table object without __index metamethod!");
+			}
+			if (h is ClosureBase) {
+				return vminterface.Call((ClosureBase)h, obj, key)[0];
+			}
+			else {
+				return GetElement(h, key);
+			}
 		}
 	}
 }
