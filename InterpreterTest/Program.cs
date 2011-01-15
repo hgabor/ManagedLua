@@ -24,11 +24,14 @@ namespace ManagedLua.InterpreterTest {
 				var luacFiles = System.IO.Directory.GetFiles("../../tests", "*.luac");
 
 				//foreach (string s in luacFiles) {
-				string s = luacFiles[2];
+				string s = luacFiles[3];
 				{
 					Console.WriteLine("Test {0}", s);
 
 					try {
+						vm.SetBreakpoint("events.luac", 197);
+						vm.SetBreakpoint("events.luac", 182);
+						
 						vm.Run(System.IO.File.ReadAllBytes(s), Path.GetFileName(s));
 					}
 					catch (Interpreter.LuaScriptException ex) {

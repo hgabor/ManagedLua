@@ -68,6 +68,18 @@ namespace ManagedLua.Interpreter {
 			this.vm = vm;
 		}
 
+		#if LUA_DEBUG
+		
+		public bool ShouldBreak() {
+			if (pc == 0) return false;
+			else if (pc == 1 || (func.f.SourcePosition[pc-1] != func.f.SourcePosition[pc-2])) {
+				return vm.ShouldBreak(func.f.FileName, func.f.SourcePosition[pc-1]);
+			}
+			else return false;
+		}
+		
+		#endif
+
 		FunctionClosure creatingClosure;
 		const double LFIELDS_PER_FLUSH = 50;
 
@@ -124,6 +136,15 @@ namespace ManagedLua.Interpreter {
 						creatingClosure = null;
 					}
 				}
+
+				#if LUA_DEBUG
+				
+				if (ShouldBreak()) {
+					System.Diagnostics.Debug.WriteLine(string.Format("Break at {0}", this.ErrorString));
+					System.Diagnostics.Debugger.Break();
+				}
+				
+				#endif
 
 				switch (opcode) {
 

@@ -620,5 +620,37 @@ namespace ManagedLua.Interpreter {
 		void IDisposable.Dispose() {
 			vminterface.Dispose();
 		}
+		
+		#if LUA_DEBUG
+		
+		private struct Breakpoint {
+			public string Filename;
+			public uint Sourcepos;
+		}
+		
+		private Dictionary<Breakpoint, object> breakpoints = new Dictionary<Breakpoint, object>();
+		
+		public void SetBreakpoint(string filename, uint sourcepos) {
+			var bp = new Breakpoint {
+				Filename = filename,
+				Sourcepos = sourcepos,
+			};
+			if (!breakpoints.ContainsKey(bp)) {
+				breakpoints.Add(bp, null);
+			}
+		}
+		
+		internal bool ShouldBreak(string filename, uint sourcepos) {
+			return breakpoints.ContainsKey(new Breakpoint {
+			                               	Filename = filename,
+			                               	Sourcepos = sourcepos,
+			                               });
+		}
+		
+		#else
+		
+		public void SetBreakpoint(string filename, uint sourcepos) {}
+		
+		#endif
 	}
 }
