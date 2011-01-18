@@ -147,7 +147,7 @@ namespace ManagedLua.Environment.Types {
 				if (d == null) return k;
 				else if (d == k) {
 					//return the next value
-					d = k;
+					d = null;
 				}
 			}
 			return null;

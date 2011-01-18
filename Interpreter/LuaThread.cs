@@ -321,30 +321,61 @@ namespace ManagedLua.Interpreter {
 				case OpCode.DIV:
 				case OpCode.MOD:
 				case OpCode.POW: {
-					double op1 = Convert.ToDouble(B_const ? func.f.Constants[iB_RK] : func.stack[iB_RK], System.Globalization.CultureInfo.InvariantCulture);
-					double op2 = Convert.ToDouble(C_const ? func.f.Constants[iC_RK] : func.stack[iC_RK], System.Globalization.CultureInfo.InvariantCulture);
-					double result;
-					switch (opcode) {
-					case OpCode.ADD:
-						result = op1 + op2;
-						break;
-					case OpCode.SUB:
-						result = op1 - op2;
-						break;
-					case OpCode.MUL:
-						result = op1 * op2;
-						break;
-					case OpCode.DIV:
-						result = op1 / op2;
-						break;
-					case OpCode.MOD:
-						result = op1 % op2;
-						break;
-					case OpCode.POW:
-						result = Math.Pow(op1, op2);
-						break;
-					default:
-						throw new Exception("Opcode mismatch");
+					object op1 = B_const ? func.f.Constants[iB_RK] : func.stack[iB_RK];
+					object op2 = C_const ? func.f.Constants[iC_RK] : func.stack[iC_RK];
+					double? dd1 = op1 as double?, dd2 = op2 as double?;
+					if (dd1 == null && op1 is string) dd1 = Convert.ToDouble(op1);
+					if (dd2 == null && op2 is string) dd2 = Convert.ToDouble(op2);
+					object result;
+					if (dd1 != null && dd2 != null) {
+						double d1 = dd1.Value;
+						double d2 = dd2.Value;
+						switch (opcode) {
+						case OpCode.ADD:
+							result = d1 + d2;
+							break;
+						case OpCode.SUB:
+							result = d1 - d2;
+							break;
+						case OpCode.MUL:
+							result = d1 * d2;
+							break;
+						case OpCode.DIV:
+							result = d1 / d2;
+							break;
+						case OpCode.MOD:
+							result = d1 % d2;
+							break;
+						case OpCode.POW:
+							result = Math.Pow(d1, d2);
+							break;
+						default:
+							throw new Exception("Opcode mismatch");
+						}
+					}
+					else {
+						switch (opcode) {
+						case OpCode.ADD:
+							result = vm.Arithmetic("__add", op1, op2);
+							break;
+						case OpCode.SUB:
+							result = vm.Arithmetic("__sub", op1, op2);
+							break;
+						case OpCode.MUL:
+							result = vm.Arithmetic("__mul", op1, op2);
+							break;
+						case OpCode.DIV:
+							result = vm.Arithmetic("__div", op1, op2);
+							break;
+						case OpCode.MOD:
+							result = vm.Arithmetic("__mod", op1, op2);
+							break;
+						case OpCode.POW:
+							result = vm.Arithmetic("__pow", op1, op2);
+							break;
+						default:
+							throw new Exception("Opcode mismatch");
+						}
 					}
 					func.stack[iA] = result;
 					break;
@@ -354,9 +385,19 @@ namespace ManagedLua.Interpreter {
 				 * UNM A B
 				 * R(A) := -R(B)
 				 */
-				case OpCode.UNM:
-					func.stack[iA] = -Convert.ToDouble(func.stack[iB]);
+				case OpCode.UNM: {
+					object op1 = func.stack[iB];
+					double? dd = op1 as double?;
+					if (dd != null) func.stack[iA] = -dd;
+					else if (op1 is string) {
+						func.stack[iA] = -Convert.ToDouble(op1);
+					}
+					else {
+						func.stack[iA] = vm.Minus(op1);
+					}
 					break;
+				}
+				
 				/*
 				 * NOT A B
 				 * R(A) := not R(B)
@@ -461,6 +502,10 @@ namespace ManagedLua.Interpreter {
 				 */
 				case OpCode.CALL: {
 					object o = func.stack[iA];
+					Table t = o as Table;
+					if (t != null) {
+						o = vm.GetMetatable(t)["__call"];
+					}
 					if (!(o is ClosureBase)) {
 						return new ThreadResult {
 							Type = ThreadResult.ResultType.Error,
@@ -468,6 +513,9 @@ namespace ManagedLua.Interpreter {
 						};
 					}
 					ClosureBase c = ((ClosureBase)o).CreateCallableInstance();
+					if (t != null) {
+						c.AddParam(t);
+					}
 					//Push params
 					if (B >= 1) {
 						for (int i = 0; i < B - 1; ++i) {

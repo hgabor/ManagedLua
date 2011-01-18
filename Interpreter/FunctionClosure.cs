@@ -40,6 +40,9 @@ namespace ManagedLua.Interpreter {
 		public FunctionClosure(Table env, FunctionClosure f) : this(env, f.f) {
 			stack.AddRange(f.stack);
 			upValues.AddRange(f.upValues);
+			if ((f.f.IsVarargFlag & VirtualMachine.VARARG_ISVARARG) != 0) {
+				vararg.AddRange(f.vararg);
+			}
 		}
 
 		public override ClosureBase CreateCallableInstance() {

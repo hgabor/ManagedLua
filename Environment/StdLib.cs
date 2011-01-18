@@ -134,6 +134,11 @@ namespace ManagedLua.Environment {
 			Console.WriteLine(string.Join("\t", s));
 		}
 
+		[Lib("rawequal")]
+		public bool rawequal(object o1, object o2) {
+			return (o1.Equals(o2));
+		}
+
 		[Lib("rawget")]
 		public object rawget(Table table, object key) {
 			return table[key];
