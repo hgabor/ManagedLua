@@ -502,9 +502,10 @@ namespace ManagedLua.Interpreter {
 				 */
 				case OpCode.CALL: {
 					object o = func.stack[iA];
-					Table t = o as Table;
-					if (t != null) {
-						o = vm.GetMetatable(t)["__call"];
+					object metaParam = null;
+					if (!(o is ClosureBase)) {
+						metaParam = o;
+						o = vm.GetMetatable(o)["__call"] as ClosureBase;
 					}
 					if (!(o is ClosureBase)) {
 						return new ThreadResult {
@@ -513,8 +514,8 @@ namespace ManagedLua.Interpreter {
 						};
 					}
 					ClosureBase c = ((ClosureBase)o).CreateCallableInstance();
-					if (t != null) {
-						c.AddParam(t);
+					if (metaParam != null) {
+						c.AddParam(metaParam);
 					}
 					//Push params
 					if (B >= 1) {
