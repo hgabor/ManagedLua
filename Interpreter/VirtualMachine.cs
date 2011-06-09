@@ -157,12 +157,15 @@ namespace ManagedLua.Interpreter {
 			Run(ReadChunk(s, filename));
 		}
 		
+		//Run a top function
 		private object[] Run(Function topFunction) {
 			return Run(new LuaThread(globals, topFunction, this));
 		}
 		
+		//Run a non-top function
+		//TODO: clarify Run functions
 		private object[] Run(FunctionClosure topFunction) {
-			return Run(new LuaThread(globals, topFunction, this));
+			return Run(new LuaThread(topFunction.env, topFunction, this));
 		}
 		
 		LuaThread currentThread = null;

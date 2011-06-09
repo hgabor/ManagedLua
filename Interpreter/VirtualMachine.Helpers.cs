@@ -136,6 +136,17 @@ namespace ManagedLua.Interpreter {
 			}
 		}
 		
+		internal object Concat(object o1, object o2) {
+			if ((o1 is string || o1 is double) && (o2 is string || o2 is double)) {
+				return o1.ToString() + o2.ToString();
+			}
+			Closure c = (GetMetatable(o1)["__concat"] as Closure) ?? (GetMetatable(o2)["__concat"] as Closure);
+			if (c == null) {
+				throw new InvalidOperationException(string.Format("Cannot concatenate {0} and {1}", o1.GetType(), o2.GetType()));
+			}
+			return vminterface.Call(c, o1, o2)[0];
+		}
+		
 		private object _getmetatable(object o) {
 			Table mt = GetMetatableOrNull(o);
 			if (mt == null) return Nil.Value;

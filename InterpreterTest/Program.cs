@@ -29,8 +29,10 @@ namespace ManagedLua.InterpreterTest {
 					Console.WriteLine("Test {0}", s);
 
 					try {
-						vm.SetBreakpoint("events.luac", 197);
-						vm.SetBreakpoint("events.luac", 182);
+						//vm.SetBreakpoint("events.luac", 197);
+						//vm.SetBreakpoint("events.luac", 182);
+						//vm.SetBreakpoint("events.luac", 236);
+						//vm.SetBreakpoint("events.luac", 245);
 						
 						vm.Run(System.IO.File.ReadAllBytes(s), Path.GetFileName(s));
 					}

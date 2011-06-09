@@ -424,15 +424,28 @@ namespace ManagedLua.Interpreter {
 				}
 				/*
 				 * CONCAT A B C
-				 * R(A) := R(B) .. (...) .. R(C), where R(B) ... R(C) are strings
+				 * R(A) := R(B) .. (...) .. R(C), where R(B) ... R(C) are strings (or not)
 				 */
-				case OpCode.CONCAT:
-					var sb = new System.Text.StringBuilder();
-					for (int i = iB; i <= iC; ++i) {
-						sb.Append(func.stack[i]);
+				case OpCode.CONCAT: {
+					int i = iC-1;
+					//TODO: optimize
+					object o1;
+					object o2 = func.stack[i+1];
+					
+					while (i >= iB) {
+						o1 = func.stack[i];
+						o2 = vm.Concat(o1, o2);
+						--i;
 					}
-					func.stack[iA] = string.Intern(sb.ToString());
+					
+					if (o2 is string) {
+						func.stack[iA] = string.Intern((string)o2);
+					}
+					else {
+						func.stack[iA] = o2;
+					}
 					break;
+				}
 
 				#endregion
 
