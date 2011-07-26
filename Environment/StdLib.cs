@@ -7,29 +7,11 @@ using System.Text;
 using ManagedLua.Environment.Types;
 
 namespace ManagedLua.Environment {
-	[AttributeUsage(AttributeTargets.Method | AttributeTargets.Field)]
-	public class LibAttribute: Attribute {
-		public String PublicName { get; private set; }
-		public String Table { get; private set; }
-		public LibAttribute(string PublicName) : this("", PublicName) {}
-		public LibAttribute(string Table, string PublicName) {
-			this.PublicName = PublicName;
-			this.Table = Table;
-		}
-	}
-
-	[AttributeUsage(AttributeTargets.Method)]
-	public class MultiRetAttribute: Attribute {}
-
-	[AttributeUsage(AttributeTargets.Parameter)]
-	public class OptionalAttribute: Attribute {
-		public object DefaultValue { get; private set; }
-		public OptionalAttribute() : this(Nil.Value) {}
-		public OptionalAttribute(object defaultValue) {
-			this.DefaultValue = defaultValue;
-		}
-	}
-
+	
+	/// <summary>
+	/// This class contains all lua's standard library functions, and some misc. helper methods.
+	/// The documentation of the library functions can be found at http://www.lua.org/manual/5.1/
+	/// </summary>
 	public partial class StdLib {
 		LuaVM vm;
 
@@ -38,6 +20,12 @@ namespace ManagedLua.Environment {
 			this.Init_package();
 		}
 		
+		/// <summary>
+		/// Converts the specified value to boolean.
+		/// Returns false if value is false or nil, otherwise true.
+		/// </summary>
+		/// <param name="value">The value</param>
+		/// <returns>The value converted to boolean</returns>
 		public static bool ToBool(object value) {
 			if (value == Nil.Value) return false;
 			else if (value is bool) return (bool)value;

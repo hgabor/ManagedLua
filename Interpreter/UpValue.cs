@@ -4,6 +4,15 @@ using System.Collections.Generic;
 using ManagedLua.Environment.Types;
 
 namespace ManagedLua.Interpreter {
+	
+	/// <summary>
+	/// Manages upvalues for closures
+	/// </summary>
+	/// <description>
+	/// An upvalue is a value that can live outside the lua interpreter's stack frame.
+	/// Initially, it points to an index of a lua stack. After it is closed (the value is discarded from the stack),
+	/// it survives, and other functions that reference it (closures) can still access it.
+	/// </description>
 	class UpValue {
 		private object value = Nil.Value;
 		private List<object> stack;
